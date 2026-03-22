@@ -2,6 +2,8 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
+
+print("🔥 TCF monitor started")
 # ================= 配置 =================
 URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
 
