@@ -39,7 +39,7 @@ def get_page():
             content = page.content()
             browser.close()
 
-            # ❌ 被封检测
+            # ❌ 403 检测
             if "403 - Forbidden" in content:
                 print("❌ 403 blocked")
                 return None
@@ -51,7 +51,7 @@ def get_page():
         return None
 
 
-# ================= 判断逻辑 =================
+# ================= 判断 =================
 def has_slots(html):
     if not html:
         return False
@@ -59,20 +59,24 @@ def has_slots(html):
     if "No sessions currently available" in html:
         return False
 
-    # 更保守：必须出现明确 booking 词才算
     keywords = ["Book", "Register", "Available"]
-
     return any(k in html for k in keywords)
 
 
-# ================= 主循环 =================
+# ================= 主程序 =================
 def main():
     print("🚀 TCF Monitor started (stable version)")
+
+    # ✅ 启动通知（你要的）
+    send_telegram("🚀 TCF Monitor 已启动（运行中）")
 
     last_state = None
 
     while True:
         html = get_page()
+
+        # ✅ debug（你要的）
+        print("🔍 html length:", len(html) if html else 0)
 
         current = has_slots(html)
 
@@ -82,7 +86,7 @@ def main():
         if last_state is None:
             last_state = current
 
-        # ❗ 从 False → True 才通知
+        # 变化通知
         elif current and not last_state:
             print("🎉 SLOT FOUND!")
             send_telegram(f"🎉 TCF Canada 可能开放报名了！\n\n{URL}")
