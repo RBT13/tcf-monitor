@@ -2,18 +2,16 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
-
-print("🔥 TCF monitor started")
 # ================= 配置 =================
 URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
 
-BOT_TOKEN = "8683283125:AAHTIr93G4VT2QVuCToBVHjVGcwIqxL-tHA"
+BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyXI"
 CHAT_ID = 5068415693
 
-CHECK_INTERVAL = 60  # 建议 30~60 秒
+CHECK_INTERVAL = 60
 
 
-# ================= Telegram 推送 =================
+# ================= Telegram =================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
@@ -26,50 +24,44 @@ def send_telegram(msg):
         print("📲 Telegram:", r.text)
 
     except Exception as e:
-        print("Telegram发送失败:", e)
+        print("Telegram error:", e)
 
 
-# ================= 获取页面（真实浏览器） =================
+# ================= Playwright =================
 def get_page():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
 
-        page.goto(URL, timeout=60000)
-        page.wait_for_timeout(5000)  # 等JS加载
+            page = browser.new_page()
+            page.goto(URL, timeout=60000)
+            page.wait_for_timeout(5000)
 
-        html = page.content()
-        browser.close()
+            html = page.content()
+            browser.close()
 
-        return html
+            return html
+
+    except Exception as e:
+        print("浏览器错误:", e)
+        return ""
 
 
-# ================= 判断是否有考位 =================
+# ================= 判断 =================
 def has_slots(html):
-    keywords_no = [
-        "No sessions currently available"
-    ]
-
-    keywords_yes = [
-        "Book",
-        "Register",
-        "Available",
-        "session"
-    ]
-
-    # 没有“无考位”关键词 + 出现一点“可能按钮词”
-    if any(k in html for k in keywords_no):
+    if not html:
         return False
 
-    if any(k in html for k in keywords_yes):
-        return True
-
-    return False
+    # 最稳判断：只要不包含 no sessions 就算可能有
+    return "No sessions currently available" not in html
 
 
-# ================= 主循环 =================
+# ================= 主程序 =================
 def main():
-    print("🚀 TCF监控启动（Telegram版）")
+    print("🚀 TCF monitor started")
 
     last_state = None
 
@@ -78,28 +70,22 @@ def main():
             html = get_page()
             available = has_slots(html)
 
-            print("状态:", "有可能有考位" if available else "暂无", time.strftime("%H:%M:%S"))
+            print("状态:", "可能有考位" if available else "暂无", time.strftime("%H:%M:%S"))
 
-            # 初始化
             if last_state is None:
                 last_state = available
 
-            # 从无 → 有（触发）
             elif available and not last_state:
-                print("🎉 检测到考位变化！")
+                print("🎉 检测到变化！发送通知")
 
                 send_telegram(
-                    "🎉 TCF Canada 可能有新考位！\n\n"
-                    f"{URL}"
+                    "🎉 TCF Canada 可能开放新考位！\n\n" + URL
                 )
 
-                last_state = available
-
-            else:
-                last_state = available
+            last_state = available
 
         except Exception as e:
-            print("错误:", e)
+            print("主循环错误:", e)
 
         time.sleep(CHECK_INTERVAL)
 
