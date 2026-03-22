@@ -23,7 +23,6 @@ def send_telegram(msg):
             timeout=10
         )
         print("📲 Telegram response:", r.text)
-
     except Exception as e:
         print("❌ Telegram error:", e)
 
@@ -45,10 +44,11 @@ def check_page(browser):
             html = page.content()
             print("🔍 html length:", len(html))
 
+            # ❗ 防空页面
             if len(html) < 100:
                 raise Exception("Empty page")
 
-            # 🔥 关键：找所有匹配
+            # 🔥 多位置检测
             texts = page.locator("text=No sessions currently available")
             count = texts.count()
 
@@ -56,7 +56,7 @@ def check_page(browser):
 
             page.close()
 
-            # ❗ 如果数量 < 2，说明至少一个消失了 → 有考位
+            # ✅ 逻辑：只要少于2个 → 有考位
             if count < 2:
                 return True
             else:
@@ -70,16 +70,19 @@ def check_page(browser):
             except:
                 pass
 
-            time.sleep(3)
+            # 🔥 递增退避
+            time.sleep(3 + attempt * 3)
 
+    # ❗ 关键：失败返回 None（不误判）
     print("🚨 all retries failed")
-    return False
+    return None
 
 
 # ================= 主程序 =================
 def main():
     print("🔥 TCF monitor started (Worker mode)")
 
+    # ✅ 启动通知
     send_telegram("🚀 TCF Monitor 已启动（Worker运行中）")
 
     last_state = None
@@ -91,10 +94,20 @@ def main():
         )
 
         while True:
+            print("💓 alive ping")
+
             try:
                 print("🔁 checking...")
 
-                available = check_page(browser)
+                result = check_page(browser)
+
+                # ❗ 请求失败 → 跳过
+                if result is None:
+                    print("⚠️ skip this round (fetch failed)")
+                    time.sleep(CHECK_INTERVAL)
+                    continue
+
+                available = result
 
                 print("📊 status:", "可能有考位" if available else "暂无")
 
@@ -133,8 +146,8 @@ def main():
                     args=["--no-sandbox", "--disable-dev-shm-usage"]
                 )
 
-            sleep_time = CHECK_INTERVAL + random.randint(0, 8)
-            time.sleep(sleep_time)
+            # ✅ 固定60秒（稳定版）
+            time.sleep(CHECK_INTERVAL)
 
 
 if __name__ == "__main__":
