@@ -6,4 +6,4 @@ COPY . /app
 
 RUN pip install -r requirements.txt
 
-CMD ["python", "-u", "-c", "import time; print('PYTHON STARTED'); time.sleep(999999)"]
+CMD ["python", "-u", "main.py"]
