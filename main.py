@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 # ================= 配置 =================
 URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
 
-BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyX"
+BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyXI"
 CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 
 CHECK_INTERVAL = 60
