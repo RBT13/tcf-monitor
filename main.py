@@ -33,6 +33,15 @@ def check_page(browser):
         try:
             page = browser.new_page()
 
+            # 🔥 随机UA（防封）
+            page.set_extra_http_headers({
+                "User-Agent": random.choice([
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/119 Safari/537.36",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/118 Safari/537.36"
+                ])
+            })
+
             page.goto(
                 URL,
                 timeout=60000,
@@ -44,11 +53,11 @@ def check_page(browser):
             html = page.content()
             print("🔍 html length:", len(html))
 
-            # ❗ 防空页面
+            # ❗ 空页面判断（被封/失败）
             if len(html) < 100:
                 raise Exception("Empty page")
 
-            # 🔥 多位置检测
+            # 🔍 多位置检测
             texts = page.locator("text=No sessions currently available")
             count = texts.count()
 
@@ -56,7 +65,7 @@ def check_page(browser):
 
             page.close()
 
-            # ✅ 逻辑：只要少于2个 → 有考位
+            # ✅ 判断逻辑
             if count < 2:
                 return True
             else:
@@ -70,10 +79,9 @@ def check_page(browser):
             except:
                 pass
 
-            # 🔥 递增退避
             time.sleep(3 + attempt * 3)
 
-    # ❗ 关键：失败返回 None（不误判）
+    # ❗ 所有尝试失败
     print("🚨 all retries failed")
     return None
 
@@ -82,10 +90,10 @@ def check_page(browser):
 def main():
     print("🔥 TCF monitor started (Worker mode)")
 
-    # ✅ 启动通知
     send_telegram("🚀 TCF Monitor 已启动（Worker运行中）")
 
     last_state = None
+    fail_count = 0
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -101,14 +109,25 @@ def main():
 
                 result = check_page(browser)
 
-                # ❗ 请求失败 → 跳过
+                # ❗ 请求失败
                 if result is None:
-                    print("⚠️ skip this round (fetch failed)")
-                    time.sleep(CHECK_INTERVAL)
+                    fail_count += 1
+                    print(f"⚠️ fetch failed ({fail_count})")
+
+                    # 🚨 连续失败 → 冷却（防封）
+                    if fail_count >= FAIL_LIMIT:
+                        print("🧊 cooling down 5 minutes...")
+                        time.sleep(300)
+                        fail_count = 0
+                    else:
+                        time.sleep(CHECK_INTERVAL)
+
                     continue
 
-                available = result
+                # ✅ 成功 → 重置失败计数
+                fail_count = 0
 
+                available = result
                 print("📊 status:", "可能有考位" if available else "暂无")
 
                 # 初始化
@@ -119,7 +138,6 @@ def main():
                 elif available and not last_state:
                     print("🎉 CHANGE detected!")
 
-                    # 二次确认
                     time.sleep(5)
                     confirm = check_page(browser)
 
@@ -135,7 +153,7 @@ def main():
             except Exception as e:
                 print("❌ loop error:", e)
 
-                # 🔥 浏览器级恢复
+                # 🔥 浏览器恢复
                 try:
                     browser.close()
                 except:
