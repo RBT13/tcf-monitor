@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY . /app
 
+RUN ls -la /app
+
 RUN pip install -r requirements.txt
 
-CMD ["python", "main.py"]
+CMD ["ls", "-la"]
