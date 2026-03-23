@@ -11,7 +11,6 @@ CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 
 CHECK_INTERVAL = 60
 
-
 # ================= Telegram =================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -22,76 +21,61 @@ def send_telegram(msg):
             data={"chat_id": CHAT_ID, "text": msg},
             timeout=10
         )
-        print("📲 Telegram response:", r.text)
+        print("📲 Telegram:", r.text)
     except Exception as e:
         print("❌ Telegram error:", e)
 
 
-# ================= 检查页面 =================
+# ================= 页面检查（核心升级） =================
 def check_page(browser):
-    for attempt in range(3):
+    try:
+        page = browser.new_page()
+
+        page.set_extra_http_headers({
+            "User-Agent": random.choice([
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/119 Safari/537.36",
+                "Mozilla/5.0 (X11; Linux x86_64) Chrome/118 Safari/537.36"
+            ])
+        })
+
+        page.goto(URL, timeout=60000, wait_until="domcontentloaded")
+        page.wait_for_timeout(5000)
+
+        html = page.content()
+        if len(html) < 500:
+            return None
+
+        text = page.inner_text("body")
+
+        if "Registration" not in text:
+            return None
+
+        # ================= 核心升级点 =================
+        nodes = page.locator("text=No sessions currently available")
+        count = nodes.count()
+
+        print("🔎 No sessions count:", count)
+
+        page.close()
+
+        return count
+
+    except Exception as e:
+        print("❌ check failed:", e)
         try:
-            page = browser.new_page()
-
-            page.set_extra_http_headers({
-                "User-Agent": random.choice([
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/119 Safari/537.36",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/118 Safari/537.36"
-                ])
-            })
-
-            page.goto(URL, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_timeout(3000)
-
-            html = page.content()
-            print("🔍 html length:", len(html))
-
-            if len(html) < 100:
-                raise Exception("Empty page")
-
-            text = page.inner_text("body")
-
-            if "Registration" not in text:
-                print("⚠️ page not fully loaded")
-                return None
-
-            texts = page.locator("text=No sessions currently available")
-            count = texts.count()
-
-            print("🔎 found count:", count)
-
             page.close()
-
-            # ✅ 精准逻辑
-            if count == 1:
-                return True
-            elif count >= 2:
-                return False
-            else:
-                print("⚠️ abnormal DOM (count=0)")
-                return None
-
-        except Exception as e:
-            print(f"❌ attempt {attempt+1} failed:", e)
-
-            try:
-                page.close()
-            except:
-                pass
-
-            time.sleep(3 + attempt * 3)
-
-    print("🚨 all retries failed")
-    return None
+        except:
+            pass
+        return None
 
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF monitor started (Worker mode)")
-    send_telegram("🚀 TCF Monitor 已启动（Worker运行中）")
+    print("🔥 TCF monitor V2 started")
+    send_telegram("🚀 TCF Monitor V2 已启动（DOM变化检测版）")
 
-    last_state = None
+    last_count = None
     last_notify_time = 0
     fail_count = 0
 
@@ -102,70 +86,68 @@ def main():
         )
 
         while True:
-            print("💓 alive ping")
+            print("\n💓 alive ping")
 
-            try:
-                print("🔁 checking...")
+            result = check_page(browser)
 
-                result = check_page(browser)
+            # ================= 失败处理 =================
+            if result is None:
+                fail_count += 1
+                print(f"⚠️ fetch failed ({fail_count})")
 
-                # ❗ 请求失败
-                if result is None:
-                    fail_count += 1
-                    print(f"⚠️ fetch failed ({fail_count})")
+                if fail_count >= FAIL_LIMIT:
+                    time.sleep(300)
+                    fail_count = 0
+                else:
+                    time.sleep(CHECK_INTERVAL)
+                continue
 
-                    if fail_count >= FAIL_LIMIT:
-                        print("🧊 cooling down 5 minutes...")
-                        time.sleep(300)
-                        fail_count = 0
-                    else:
-                        time.sleep(CHECK_INTERVAL)
+            fail_count = 0
+            now = time.time()
 
-                    continue
+            print("📊 current count:", result)
 
-                fail_count = 0
-                available = result
+            # ================= 初始化状态 =================
+            if last_count is None:
+                last_count = result
+                print("🧭 init baseline:", last_count)
+                time.sleep(CHECK_INTERVAL)
+                continue
 
-                print("📊 status:", "可能有考位" if available else "暂无")
+            # ================= 变化检测（核心） =================
+            changed = result != last_count
 
-                now = time.time()
+            # 变化方向判断
+            improvement = result < last_count
 
-                # 🎯 触发条件（修复重点）
-                should_notify = (
-                    available and
-                    (last_state is False or last_state is None) and
-                    (now - last_notify_time > NOTIFY_COOLDOWN)
-                )
+            print("📈 changed:", changed, "| improvement:", improvement)
 
-                if should_notify:
-                    print("🎉 CHANGE detected!")
+            should_notify = (
+                changed and
+                improvement and
+                (now - last_notify_time > NOTIFY_COOLDOWN)
+            )
 
-                    time.sleep(5)
-                    confirm = check_page(browser)
+            if should_notify:
+                print("🎉 CHANGE detected!")
 
-                    if confirm:
-                        send_telegram(
-                            "🎉 TCF Canada 出现考位！（至少一个考点开放）\n\n" + URL
-                        )
-                        last_notify_time = now
-                    else:
-                        print("⚠️ false positive ignored")
+                # 二次确认（防误报）
+                time.sleep(5)
+                confirm = check_page(browser)
 
-                # ✅ 只在“有效结果”时更新状态
-                last_state = available
+                if confirm is not None and confirm < last_count:
+                    send_telegram(
+                        f"🎉 TCF 可能出现新考位变化！\n\n"
+                        f"之前: {last_count}\n现在: {confirm}\n\n{URL}"
+                    )
 
-            except Exception as e:
-                print("❌ loop error:", e)
+                    last_count = confirm
+                    last_notify_time = now
+                else:
+                    print("⚠️ false positive ignored")
 
-                try:
-                    browser.close()
-                except:
-                    pass
-
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage"]
-                )
+            # ================= 更新状态 =================
+            last_count = result
 
             time.sleep(CHECK_INTERVAL)
 
