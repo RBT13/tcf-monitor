@@ -33,7 +33,6 @@ def check_page(browser):
         try:
             page = browser.new_page()
 
-            # 🔥 随机UA（防封）
             page.set_extra_http_headers({
                 "User-Agent": random.choice([
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
@@ -42,34 +41,36 @@ def check_page(browser):
                 ])
             })
 
-            page.goto(
-                URL,
-                timeout=60000,
-                wait_until="domcontentloaded"
-            )
-
+            page.goto(URL, timeout=60000, wait_until="domcontentloaded")
             page.wait_for_timeout(3000)
 
             html = page.content()
             print("🔍 html length:", len(html))
 
-            # ❗ 空页面判断（被封/失败）
             if len(html) < 100:
                 raise Exception("Empty page")
 
-            # 🔍 多位置检测
+            text = page.inner_text("body")
+
+            if "Registration" not in text:
+                print("⚠️ page not fully loaded")
+                return None
+
             texts = page.locator("text=No sessions currently available")
             count = texts.count()
 
-            print("🔎 found 'No sessions' count:", count)
+            print("🔎 found count:", count)
 
             page.close()
 
-            # ✅ 判断逻辑
-            if count < 2:
+            # ✅ 精准逻辑
+            if count == 1:
                 return True
-            else:
+            elif count >= 2:
                 return False
+            else:
+                print("⚠️ abnormal DOM (count=0)")
+                return None
 
         except Exception as e:
             print(f"❌ attempt {attempt+1} failed:", e)
@@ -81,7 +82,6 @@ def check_page(browser):
 
             time.sleep(3 + attempt * 3)
 
-    # ❗ 所有尝试失败
     print("🚨 all retries failed")
     return None
 
@@ -89,10 +89,10 @@ def check_page(browser):
 # ================= 主程序 =================
 def main():
     print("🔥 TCF monitor started (Worker mode)")
-
     send_telegram("🚀 TCF Monitor 已启动（Worker运行中）")
 
     last_state = None
+    last_notify_time = 0
     fail_count = 0
 
     with sync_playwright() as p:
@@ -114,7 +114,6 @@ def main():
                     fail_count += 1
                     print(f"⚠️ fetch failed ({fail_count})")
 
-                    # 🚨 连续失败 → 冷却（防封）
                     if fail_count >= FAIL_LIMIT:
                         print("🧊 cooling down 5 minutes...")
                         time.sleep(300)
@@ -124,18 +123,21 @@ def main():
 
                     continue
 
-                # ✅ 成功 → 重置失败计数
                 fail_count = 0
-
                 available = result
+
                 print("📊 status:", "可能有考位" if available else "暂无")
 
-                # 初始化
-                if last_state is None:
-                    last_state = available
+                now = time.time()
 
-                # 状态变化检测
-                elif available and not last_state:
+                # 🎯 触发条件（修复重点）
+                should_notify = (
+                    available and
+                    (last_state is False or last_state is None) and
+                    (now - last_notify_time > NOTIFY_COOLDOWN)
+                )
+
+                if should_notify:
                     print("🎉 CHANGE detected!")
 
                     time.sleep(5)
@@ -145,15 +147,16 @@ def main():
                         send_telegram(
                             "🎉 TCF Canada 出现考位！（至少一个考点开放）\n\n" + URL
                         )
+                        last_notify_time = now
                     else:
                         print("⚠️ false positive ignored")
 
+                # ✅ 只在“有效结果”时更新状态
                 last_state = available
 
             except Exception as e:
                 print("❌ loop error:", e)
 
-                # 🔥 浏览器恢复
                 try:
                     browser.close()
                 except:
@@ -164,7 +167,6 @@ def main():
                     args=["--no-sandbox", "--disable-dev-shm-usage"]
                 )
 
-            # ✅ 固定60秒（稳定版）
             time.sleep(CHECK_INTERVAL)
 
 
