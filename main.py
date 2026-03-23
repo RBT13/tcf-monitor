@@ -15,7 +15,6 @@ FAIL_LIMIT = 3
 # 防重复通知（1.5分钟冷却）
 NOTIFY_COOLDOWN = 90
 
-
 # ================= Telegram =================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -71,10 +70,23 @@ def check_page(context):
             html = page.content()
             print("🔍 html length:", len(html))
 
+            # ⚠️ 提前获取文本（后面用于判断）
+            text = page.inner_text("body")
+
+            # ================= NEW: 检测排队 / 风控 / 异常页面 =================
+            if (
+                len(html) < 20000 or
+                "Checking your browser" in text or
+                "Please wait" in text or
+                "queue" in text.lower() or
+                "access denied" in text.lower()
+            ):
+                print("🚨 BLOCKED / QUEUE detected")
+                page.close()
+                return {"status": "blocked"}
+
             if len(html) < 500:
                 raise Exception("page too small")
-
-            text = page.inner_text("body")
 
             if "Registration" not in text:
                 raise Exception("page not ready")
@@ -84,7 +96,7 @@ def check_page(context):
             print("🔎 No sessions count:", count)
 
             page.close()
-            return count
+            return {"status": "ok", "count": count}
 
         except Exception as e:
             print(f"❌ attempt {attempt+1} failed:", e)
@@ -98,7 +110,7 @@ def check_page(context):
             time.sleep(2 + attempt * 2)
 
     print("🚨 check_page totally failed")
-    return None
+    return {"status": "error"}
 
 
 # ================= 主程序 =================
@@ -126,8 +138,23 @@ def main():
 
                 result = check_page(context)
 
+                # ================= NEW: BLOCKED（关键新增逻辑） =================
+                if result["status"] == "blocked":
+                    now = time.time()
+
+                    if now - last_notify_time > NOTIFY_COOLDOWN:
+                        send_telegram(
+                            "🚨 TCF Canada 页面异常（疑似放位/排队中）！\n\n"
+                            "可能已经出现考位，请立即手动查看！\n\n"
+                            f"{URL}"
+                        )
+                        last_notify_time = now
+
+                    time.sleep(CHECK_INTERVAL)
+                    continue
+
                 # ================= fail =================
-                if result is None:
+                if result["status"] != "ok":
                     fail_count += 1
                     print(f"⚠️ fetch failed ({fail_count})")
 
@@ -148,17 +175,19 @@ def main():
                 fail_count = 0
                 now = time.time()
 
-                print("📊 status:", result)
+                current_count = result["count"]
+
+                print("📊 status:", current_count)
 
                 # ================= init =================
                 if last_count is None:
-                    last_count = result
+                    last_count = current_count
                     time.sleep(CHECK_INTERVAL)
                     continue
 
                 # ================= detect =================
-                changed = result != last_count
-                improved = result < last_count
+                changed = current_count != last_count
+                improved = current_count < last_count
 
                 should_notify = (
                     changed and
@@ -173,18 +202,21 @@ def main():
 
                     confirm = check_page(context)
 
-                    if confirm is not None and confirm < last_count:
+                    if (
+                        confirm["status"] == "ok" and
+                        confirm["count"] < last_count
+                    ):
                         send_telegram(
                             "🎉 TCF Canada 可能出现考位变化！\n\n"
-                            f"之前: {last_count}\n现在: {confirm}\n\n{URL}"
+                            f"之前: {last_count}\n现在: {confirm['count']}\n\n{URL}"
                         )
 
-                        last_count = confirm
+                        last_count = confirm["count"]
                         last_notify_time = now
                     else:
                         print("⚠️ false positive ignored")
 
-                last_count = result
+                last_count = current_count
 
             except Exception as e:
                 print("❌ loop crash:", e)
