@@ -31,13 +31,31 @@ def send_telegram(msg):
         print("❌ Telegram error:", e)
 
 
+# ================= browser 重建 =================
+def create_browser(p):
+    print("♻️ launching browser...")
+
+    browser = p.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--single-process"
+        ]
+    )
+
+    context = browser.new_context()
+    return browser, context
+
+
 # ================= 检查页面 =================
-def check_page(browser):
+def check_page(context):
     page = None
 
     for attempt in range(2):
         try:
-            page = browser.new_page()
+            page = context.new_page()
 
             page.set_extra_http_headers({
                 "User-Agent": random.choice([
@@ -61,7 +79,6 @@ def check_page(browser):
             if "Registration" not in text:
                 raise Exception("page not ready")
 
-            # ================= 核心检测 =================
             count = page.locator("text=No sessions currently available").count()
 
             print("🔎 No sessions count:", count)
@@ -86,9 +103,9 @@ def check_page(browser):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF monitor started (Railway stable fixed)")
+    print("🔥 TCF monitor started (Railway production stable v2)")
 
-    send_telegram("🚀 TCF Monitor 已启动（Railway稳定修复版）")
+    send_telegram("🚀 TCF Monitor 已启动（Railway稳定v2）")
 
     last_count = None
     last_notify_time = 0
@@ -96,48 +113,33 @@ def main():
 
     with sync_playwright() as p:
 
-        # ================= browser 初始化 =================
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process"
-            ]
-        )
+        browser, context = create_browser(p)
 
         while True:
             print("\n💓 alive ping")
 
             try:
-                result = check_page(browser)
+                # ================= browser health check =================
+                if not browser.is_connected():
+                    print("⚠️ browser dead -> restarting")
+                    browser, context = create_browser(p)
 
-                # ================= fail 处理 =================
+                result = check_page(context)
+
+                # ================= fail =================
                 if result is None:
                     fail_count += 1
                     print(f"⚠️ fetch failed ({fail_count})")
 
                     if fail_count >= FAIL_LIMIT:
-                        print("♻️ restarting browser...")
+                        print("♻️ hard restart browser")
 
                         try:
                             browser.close()
                         except:
                             pass
 
-                        time.sleep(3)
-
-                        browser = p.chromium.launch(
-                            headless=True,
-                            args=[
-                                "--no-sandbox",
-                                "--disable-dev-shm-usage",
-                                "--disable-gpu",
-                                "--single-process"
-                            ]
-                        )
-
+                        browser, context = create_browser(p)
                         fail_count = 0
 
                     time.sleep(CHECK_INTERVAL)
@@ -154,7 +156,7 @@ def main():
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                # ================= change detect =================
+                # ================= detect =================
                 changed = result != last_count
                 improved = result < last_count
 
@@ -169,7 +171,7 @@ def main():
 
                     time.sleep(5)
 
-                    confirm = check_page(browser)
+                    confirm = check_page(context)
 
                     if confirm is not None and confirm < last_count:
                         send_telegram(
@@ -185,24 +187,14 @@ def main():
                 last_count = result
 
             except Exception as e:
-                print("❌ loop error:", e)
+                print("❌ loop crash:", e)
 
                 try:
                     browser.close()
                 except:
                     pass
 
-                time.sleep(3)
-
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                        "--single-process"
-                    ]
-                )
+                browser, context = create_browser(p)
 
             time.sleep(CHECK_INTERVAL)
 
