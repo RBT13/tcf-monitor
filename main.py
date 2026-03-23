@@ -31,14 +31,12 @@ def send_telegram(msg):
         print("❌ Telegram error:", e)
 
 
+# ================= 全局 browser 锁 =================
+browser_lock = threading.Lock()
+
+
 # ================= 检查页面 =================
 def check_page(browser):
-    """
-    🔥 核心稳定修复：
-    - 不在 retry 里 close browser
-    - 只关闭 page
-    - browser 统一由 main 控制
-    """
     page = None
 
     for attempt in range(2):
@@ -94,11 +92,6 @@ def check_page(browser):
 def main():
     print("🔥 TCF monitor started (Railway stable fixed)")
 
-    # ================= 启动锁（防 3 次启动消息） =================
-    if getattr(main, "_started", False):
-        return
-    main._started = True
-
     send_telegram("🚀 TCF Monitor 已启动（Railway稳定修复版）")
 
     last_count = None
@@ -122,7 +115,9 @@ def main():
             print("\n💓 alive ping")
 
             try:
-                result = check_page(browser)
+                # ================= 🔥 browser 锁保护 =================
+                with browser_lock:
+                    result = check_page(browser)
 
                 # ================= fail 处理 =================
                 if result is None:
@@ -133,21 +128,23 @@ def main():
                         print("♻️ restarting browser...")
 
                         try:
-                            browser.close()
+                            with browser_lock:
+                                browser.close()
                         except:
                             pass
 
                         time.sleep(3)
 
-                        browser = p.chromium.launch(
-                            headless=True,
-                            args=[
-                                "--no-sandbox",
-                                "--disable-dev-shm-usage",
-                                "--disable-gpu",
-                                "--single-process"
-                            ]
-                        )
+                        with browser_lock:
+                            browser = p.chromium.launch(
+                                headless=True,
+                                args=[
+                                    "--no-sandbox",
+                                    "--disable-dev-shm-usage",
+                                    "--disable-gpu",
+                                    "--single-process"
+                                ]
+                            )
 
                         fail_count = 0
 
@@ -179,7 +176,9 @@ def main():
                     print("🎉 CHANGE detected!")
 
                     time.sleep(5)
-                    confirm = check_page(browser)
+
+                    with browser_lock:
+                        confirm = check_page(browser)
 
                     if confirm is not None and confirm < last_count:
                         send_telegram(
@@ -197,23 +196,24 @@ def main():
             except Exception as e:
                 print("❌ loop error:", e)
 
-                # ================= 防 crash =================
                 try:
-                    browser.close()
+                    with browser_lock:
+                        browser.close()
                 except:
                     pass
 
                 time.sleep(3)
 
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                        "--single-process"
-                    ]
-                )
+                with browser_lock:
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--single-process"
+                        ]
+                    )
 
             time.sleep(CHECK_INTERVAL)
 
