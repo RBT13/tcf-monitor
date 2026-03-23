@@ -12,7 +12,7 @@ CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 CHECK_INTERVAL = 60
 FAIL_LIMIT = 3
 
-# 防重复通知（10分钟冷却）
+# 防重复通知（1.5分钟冷却）
 NOTIFY_COOLDOWN = 90
 
 
@@ -31,27 +31,17 @@ def send_telegram(msg):
         print("❌ Telegram error:", e)
 
 
-# ================= 安全 goto（关键修复） =================
-def safe_goto(page, url):
-    for i in range(3):
-        try:
-            page.goto(
-                url,
-                timeout=60000,
-                wait_until="domcontentloaded"
-            )
-            return True
-        except Exception as e:
-            print(f"⚠️ goto retry {i+1}: {e}")
-            time.sleep(3 + i * 2)
-    return False
-
-
 # ================= 检查页面 =================
 def check_page(browser):
+    """
+    🔥 核心稳定修复：
+    - 不在 retry 里 close browser
+    - 只关闭 page
+    - browser 统一由 main 控制
+    """
     page = None
 
-    for attempt in range(2):  # 🔥 page级别重试
+    for attempt in range(2):
         try:
             page = browser.new_page()
 
@@ -63,26 +53,22 @@ def check_page(browser):
                 ])
             })
 
-            ok = safe_goto(page, URL)
-            if not ok:
-                raise Exception("goto failed")
-
+            page.goto(URL, timeout=60000, wait_until="domcontentloaded")
             page.wait_for_timeout(4000)
 
             html = page.content()
             print("🔍 html length:", len(html))
 
             if len(html) < 500:
-                raise Exception("empty page")
+                raise Exception("page too small")
 
             text = page.inner_text("body")
 
             if "Registration" not in text:
                 raise Exception("page not ready")
 
-            # ================= 核心检测逻辑 =================
-            nodes = page.locator("text=No sessions currently available")
-            count = nodes.count()
+            # ================= 核心检测 =================
+            count = page.locator("text=No sessions currently available").count()
 
             print("🔎 No sessions count:", count)
 
@@ -98,7 +84,7 @@ def check_page(browser):
             except:
                 pass
 
-            time.sleep(2 + attempt * 3)
+            time.sleep(2 + attempt * 2)
 
     print("🚨 check_page totally failed")
     return None
@@ -106,7 +92,13 @@ def check_page(browser):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF monitor started (Railway stable version)")
+    print("🔥 TCF monitor started (Railway stable fixed)")
+
+    # ================= 启动锁（防 3 次启动消息） =================
+    if getattr(main, "_started", False):
+        return
+    main._started = True
+
     send_telegram("🚀 TCF Monitor 已启动（Railway稳定修复版）")
 
     last_count = None
@@ -114,6 +106,8 @@ def main():
     fail_count = 0
 
     with sync_playwright() as p:
+
+        # ================= browser 初始化 =================
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -130,7 +124,7 @@ def main():
             try:
                 result = check_page(browser)
 
-                # ================= 失败处理 =================
+                # ================= fail 处理 =================
                 if result is None:
                     fail_count += 1
                     print(f"⚠️ fetch failed ({fail_count})")
@@ -142,6 +136,8 @@ def main():
                             browser.close()
                         except:
                             pass
+
+                        time.sleep(3)
 
                         browser = p.chromium.launch(
                             headless=True,
@@ -163,13 +159,13 @@ def main():
 
                 print("📊 status:", result)
 
-                # ================= 初始化 =================
+                # ================= init =================
                 if last_count is None:
                     last_count = result
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                # ================= 状态变化判断 =================
+                # ================= change detect =================
                 changed = result != last_count
                 improved = result < last_count
 
@@ -182,13 +178,12 @@ def main():
                 if should_notify:
                     print("🎉 CHANGE detected!")
 
-                    # 🔥 二次确认（防误报）
                     time.sleep(5)
                     confirm = check_page(browser)
 
                     if confirm is not None and confirm < last_count:
                         send_telegram(
-                            "🎉 TCF Canada 可能出现新考位变化！\n\n"
+                            "🎉 TCF Canada 可能出现考位变化！\n\n"
                             f"之前: {last_count}\n现在: {confirm}\n\n{URL}"
                         )
 
@@ -202,11 +197,13 @@ def main():
             except Exception as e:
                 print("❌ loop error:", e)
 
-                # 🔥 loop级别恢复（关键修复 Railway crash）
+                # ================= 防 crash =================
                 try:
                     browser.close()
                 except:
                     pass
+
+                time.sleep(3)
 
                 browser = p.chromium.launch(
                     headless=True,
