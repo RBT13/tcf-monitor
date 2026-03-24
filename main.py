@@ -16,7 +16,7 @@ MIN_INTERVAL = 180
 MAX_INTERVAL = 300
 
 # Queue状态下检查频率（更快判断是否放行）
-QUEUE_CHECK_INTERVAL = 8
+QUEUE_WAIT = 8
 
 # 防止重复通知（秒）
 NOTIFY_COOLDOWN = 100
