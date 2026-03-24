@@ -102,16 +102,26 @@ def main():
                         last_notify_time = now
 
                     # 👉 有位置时可以短间隔再查一次（更激进）
-                    sleep_time = random.randint(30, 60)
+                    sleep_time = random.randint(5, 15)
 
                 # ================= 没位置 =================
                 else:
                     print("😴 没有考位，准备离开页面")
 
                     sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
+                    # ⭐ 关键：关闭页面（真正离开）
+                    try:
+                        page.close()
+                        print("🛑 已关闭当前页面")
+                    except:
+                        pass
 
                 print(f"⏱ 下次访问间隔: {sleep_time}s")
                 time.sleep(sleep_time)
+
+                # ⭐ 关键：重新创建页面（全新环境）
+                page = context.new_page()
+                print("🆕 新页面已创建")
 
             except Exception as e:
                 print("❌ 错误:", e)
