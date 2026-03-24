@@ -17,20 +17,18 @@ API_URLS = [
 ]
 
 
-# ================= ADAPTIVE STATE =================
-base_interval = 180  # ⭐ 3 minutes start baseline
-min_interval = 180   # ⭐ 3 min minimum
-max_interval = 300   # ⭐ 5 min maximum
+# ================= STATE =================
+base_interval = 240   # ⭐ 4 min start
+min_interval = 180    # 3 min
+max_interval = 360    # 6 min
 
-fail_streak = 0
-success_streak = 0
 last_notify = 0
 
-session = requests.Session()
 
 # ================= TELEGRAM =================
 def send(msg):
     try:
+        import requests
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg},
@@ -40,59 +38,58 @@ def send(msg):
         pass
 
 
-# ================= SESSION REFRESH =================
-def refresh_session():
-    global session
+# ================= BROWSER SESSION =================
+def create_browser():
+    p = sync_playwright().start()
 
-    print("♻️ refreshing session...")
+    browser = p.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"]
+    )
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
+    context = browser.new_context()
+    page = context.new_page()
+
+    return p, browser, context, page
+
+
+def init_page(page):
+    print("🌐 loading main page...")
+    page.goto(URL, wait_until="domcontentloaded")
+    page.wait_for_timeout(5000)
+
+
+# ================= BROWSER-BASED API CALL =================
+def fetch_api(page, url):
+    try:
+        result = page.evaluate(
+            """async (url) => {
+                try {
+                    const res = await fetch(url, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'accept': 'application/json, text/plain, */*'
+                        }
+                    });
+                    const text = await res.text();
+                    return { status: res.status, text };
+                } catch (e) {
+                    return { status: 0, text: '' };
+                }
+            }""",
+            url
         )
 
-        context = browser.new_context()
-        page = context.new_page()
+        print("🔎 status:", result["status"])
 
-        page.goto(URL, wait_until="domcontentloaded")
-        page.wait_for_timeout(5000)
-
-        session = requests.Session()
-
-        for c in context.cookies():
-            session.cookies.set(c["name"], c["value"])
-
-        browser.close()
-
-    print("✅ session refreshed")
-
-
-# ================= FETCH =================
-def fetch(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 Chrome/120",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": URL,
-        "Origin": "https://www.alliance-francaise.ca"
-    }
-
-    try:
-        r = session.get(url, headers=headers, timeout=15)
-
-        print("🔎 status:", r.status_code)
-
-        # ================= THROTTLE =================
-        if r.status_code == 202:
-            return "pending"
-
-        if r.status_code != 200:
+        if result["status"] != 200:
             return None
 
-        if not r.text or len(r.text) < 10:
+        if not result["text"] or len(result["text"]) < 10:
             return None
 
-        return r.json()
+        return result["text"]
 
     except Exception as e:
         print("❌ fetch error:", e)
@@ -100,137 +97,92 @@ def fetch(url):
 
 
 # ================= PARSE =================
-def parse(data):
-    if data == "pending":
-        return -1
-
-    if not data:
+def parse_json(text):
+    try:
+        import json
+        data = json.loads(text)
+        items = data.get("items", [])
+        total = data.get("totalItems", 0)
+        return max(len(items), int(total))
+    except:
         return 0
-
-    items = data.get("items", [])
-    total = data.get("totalItems", 0)
-
-    return max(len(items), int(total))
 
 
 # ================= CHECK =================
-def check_all():
+def check_all(page):
     total = 0
-    pending = False
 
     for url in API_URLS:
-        data = fetch(url)
-        count = parse(data)
-
-        if count == -1:
-            pending = True
-            continue
+        text = fetch_api(page, url)
+        count = parse_json(text)
 
         print("🔎 count:", count)
         total += count
 
-    return total, pending
+    return total
 
 
-# ================= ADAPTIVE CONTROL (SAFE MODE) =================
-def adjust_interval(success, pending):
+# ================= ADAPTIVE INTERVAL =================
+def get_interval(last, current):
     global base_interval
 
-    jitter = random.randint(-20, 20)
+    jitter = random.randint(-30, 30)
 
-    # 🚨 202 / throttle → 强降速
-    if pending:
-        base_interval = min(max_interval, base_interval + 40)
-        return min(max_interval, base_interval + jitter + 30)
+    # change detection
+    changed = (last is not None and current != last)
 
-    # ❌ error → 降速
-    if not success:
-        base_interval = min(max_interval, base_interval + 30)
-        return min(max_interval, base_interval + jitter + 20)
+    if changed:
+        base_interval = max(min_interval, base_interval - 10)
+    else:
+        base_interval = min(max_interval, base_interval + 10)
 
-    # 🟢 success → 轻微加速但不突破安全线
-    base_interval = max(min_interval, base_interval - 5)
-
-    # ⭐ 强制安全下限（关键：防止太激进）
-    if base_interval < 180:
-        base_interval = 180
-
-    return base_interval + jitter
+    return max(min_interval, min(max_interval, base_interval + jitter))
 
 
 # ================= MAIN =================
 def main():
-    global fail_streak, success_streak, last_notify
+    global last_notify
 
-    print("🔥 Stable adaptive monitor started (3–5 min safe mode)")
+    print("🚀 Browser-native monitor started (anti-202 stable mode)")
 
-    send("🚀 TCF Monitor 启动（稳定防封 3–5min 模式）")
+    send("🚀 TCF Monitor 启动（Browser-native 稳定版）")
 
-    refresh_session()
+    p, browser, context, page = create_browser()
+    init_page(page)
 
     last = None
 
-    while True:
-        try:
-            current, pending = check_all()
+    try:
+        while True:
+            current = check_all(page)
 
-            print("📊 TOTAL:", current, "| pending:", pending)
-
-            # ================= pending handling =================
-            if pending:
-                print("⏳ throttled → cooling down")
-                fail_streak += 1
-            else:
-                fail_streak = 0
-
-            # ================= first run =================
-            if last is None:
-                last = current
-
-            changed = current != last
-            improved = current > last
+            print("📊 TOTAL:", current)
 
             now = time.time()
 
             # ================= notify =================
-            if changed and improved:
-                success_streak += 1
-
+            if last is not None and current > last:
                 if now - last_notify > 180:
                     send(
-                        "🎉 TCF Canada 更新检测\n\n"
+                        "🎉 TCF Canada 出现更新！\n\n"
                         f"之前: {last}\n现在: {current}"
                     )
                     last_notify = now
-            else:
-                success_streak = max(0, success_streak - 1)
-
-            # ================= session refresh =================
-            if fail_streak >= 5:
-                refresh_session()
-                fail_streak = 0
 
             last = current
 
             # ================= interval =================
-            interval = adjust_interval(
-                success=(current >= 0),
-                pending=pending
-            )
+            interval = get_interval(last, current)
 
             print(f"⏱ next check in {interval:.1f}s")
+            time.sleep(interval)
 
-        except Exception as e:
-            print("❌ loop error:", e)
-            fail_streak += 1
+    except Exception as e:
+        print("❌ fatal error:", e)
 
-            if fail_streak >= 3:
-                refresh_session()
-                fail_streak = 0
-
-            interval = random.randint(180, 300)
-
-        time.sleep(interval)
+    finally:
+        browser.close()
+        p.stop()
 
 
 if __name__ == "__main__":
