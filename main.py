@@ -9,7 +9,6 @@ BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyXI"
 CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 
 
-
 URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
 
 API_URLS = [
@@ -18,12 +17,18 @@ API_URLS = [
 ]
 
 
-CHECK_INTERVAL = 60
-FAIL_LIMIT = 3
-NOTIFY_COOLDOWN = 120
+# ================= ADAPTIVE STATE =================
+base_interval = 180  # ⭐ 3 minutes start baseline
+min_interval = 180   # ⭐ 3 min minimum
+max_interval = 300   # ⭐ 5 min maximum
 
+fail_streak = 0
+success_streak = 0
+last_notify = 0
 
-# ================= Telegram =================
+session = requests.Session()
+
+# ================= TELEGRAM =================
 def send(msg):
     try:
         requests.post(
@@ -35,17 +40,11 @@ def send(msg):
         pass
 
 
-# ================= 全局 session =================
-session = requests.Session()
-fail_count = 0
-last_notify = 0
-
-
-# ================= Playwright 获取 cookie =================
+# ================= SESSION REFRESH =================
 def refresh_session():
     global session
 
-    print("♻️ refreshing browser session...")
+    print("♻️ refreshing session...")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -59,12 +58,9 @@ def refresh_session():
         page.goto(URL, wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
 
-        cookies = context.cookies()
-
         session = requests.Session()
 
-        # 把 cookies 注入 requests session
-        for c in cookies:
+        for c in context.cookies():
             session.cookies.set(c["name"], c["value"])
 
         browser.close()
@@ -72,10 +68,10 @@ def refresh_session():
     print("✅ session refreshed")
 
 
-# ================= API 请求 =================
+# ================= FETCH =================
 def fetch(url):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 Chrome/120",
         "Accept": "application/json, text/plain, */*",
         "Referer": URL,
         "Origin": "https://www.alliance-francaise.ca"
@@ -84,8 +80,16 @@ def fetch(url):
     try:
         r = session.get(url, headers=headers, timeout=15)
 
+        print("🔎 status:", r.status_code)
+
+        # ================= THROTTLE =================
+        if r.status_code == 202:
+            return "pending"
+
         if r.status_code != 200:
-            print("❌ status:", r.status_code)
+            return None
+
+        if not r.text or len(r.text) < 10:
             return None
 
         return r.json()
@@ -95,8 +99,11 @@ def fetch(url):
         return None
 
 
-# ================= 解析 =================
+# ================= PARSE =================
 def parse(data):
+    if data == "pending":
+        return -1
+
     if not data:
         return 0
 
@@ -106,28 +113,58 @@ def parse(data):
     return max(len(items), int(total))
 
 
-# ================= 主检查 =================
+# ================= CHECK =================
 def check_all():
     total = 0
+    pending = False
 
     for url in API_URLS:
         data = fetch(url)
         count = parse(data)
 
-        print("🔎 count:", count)
+        if count == -1:
+            pending = True
+            continue
 
+        print("🔎 count:", count)
         total += count
 
-    return total
+    return total, pending
 
 
-# ================= 主循环 =================
+# ================= ADAPTIVE CONTROL (SAFE MODE) =================
+def adjust_interval(success, pending):
+    global base_interval
+
+    jitter = random.randint(-20, 20)
+
+    # 🚨 202 / throttle → 强降速
+    if pending:
+        base_interval = min(max_interval, base_interval + 40)
+        return min(max_interval, base_interval + jitter + 30)
+
+    # ❌ error → 降速
+    if not success:
+        base_interval = min(max_interval, base_interval + 30)
+        return min(max_interval, base_interval + jitter + 20)
+
+    # 🟢 success → 轻微加速但不突破安全线
+    base_interval = max(min_interval, base_interval - 5)
+
+    # ⭐ 强制安全下限（关键：防止太激进）
+    if base_interval < 180:
+        base_interval = 180
+
+    return base_interval + jitter
+
+
+# ================= MAIN =================
 def main():
-    global fail_count, last_notify
+    global fail_streak, success_streak, last_notify
 
-    print("🔥 FINAL stable monitor started")
+    print("🔥 Stable adaptive monitor started (3–5 min safe mode)")
 
-    send("🚀 TCF Monitor 启动（终极稳定版）")
+    send("🚀 TCF Monitor 启动（稳定防封 3–5min 模式）")
 
     refresh_session()
 
@@ -135,51 +172,65 @@ def main():
 
     while True:
         try:
-            current = check_all()
-            now = time.time()
+            current, pending = check_all()
 
-            print("📊 TOTAL:", current)
+            print("📊 TOTAL:", current, "| pending:", pending)
 
-            # ================= 初始化 =================
+            # ================= pending handling =================
+            if pending:
+                print("⏳ throttled → cooling down")
+                fail_streak += 1
+            else:
+                fail_streak = 0
+
+            # ================= first run =================
             if last is None:
                 last = current
-                time.sleep(CHECK_INTERVAL)
-                continue
 
-            # ================= 正常变化检测 =================
             changed = current != last
             improved = current > last
 
+            now = time.time()
+
+            # ================= notify =================
             if changed and improved:
-                if now - last_notify > NOTIFY_COOLDOWN:
+                success_streak += 1
 
-                    print("🎉 SLOT DETECTED!")
-
+                if now - last_notify > 180:
                     send(
-                        "🎉 TCF Canada 出现新考位！\n\n"
-                        f"之前: {last}\n现在: {current}\n\n{URL}"
+                        "🎉 TCF Canada 更新检测\n\n"
+                        f"之前: {last}\n现在: {current}"
                     )
-
                     last_notify = now
+            else:
+                success_streak = max(0, success_streak - 1)
 
-                last = current
+            # ================= session refresh =================
+            if fail_streak >= 5:
+                refresh_session()
+                fail_streak = 0
 
-            # ================= 更新 =================
             last = current
-            fail_count = 0
+
+            # ================= interval =================
+            interval = adjust_interval(
+                success=(current >= 0),
+                pending=pending
+            )
+
+            print(f"⏱ next check in {interval:.1f}s")
 
         except Exception as e:
             print("❌ loop error:", e)
+            fail_streak += 1
 
-            fail_count += 1
-
-            # ===== 自动恢复 session =====
-            if fail_count >= FAIL_LIMIT:
-                print("♻️ rebuilding session...")
+            if fail_streak >= 3:
                 refresh_session()
-                fail_count = 0
+                fail_streak = 0
 
-        time.sleep(CHECK_INTERVAL)
+            interval = random.randint(180, 300)
+
+        time.sleep(interval)
 
 
 if __name__ == "__main__":
