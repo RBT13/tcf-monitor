@@ -15,11 +15,11 @@ URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-c
 MIN_INTERVAL = 180
 MAX_INTERVAL = 300
 
-CHECK_INTERVAL = 10
+CHECK_INTERVAL = 5   # 页面内短检查
+
 NOTIFY_COOLDOWN = 120
 
 KEYWORD = "No sessions currently available"
-
 
 
 # ================= Telegram =================
@@ -36,11 +36,10 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v19（最终稳定定位版）")
+    print("🔥 TCF Monitor v20（最终行为优化版）")
 
-    send_telegram("🚀 TCF Monitor v19 启动")
+    send_telegram("🚀 TCF Monitor v20 启动")
 
-    last_occurrences = None
     last_notify_time = 0
 
     with sync_playwright() as p:
@@ -53,76 +52,69 @@ def main():
 
         while True:
             try:
-                print("\n💓 新一轮进入页面")
+                print("\n💓 新一轮访问页面")
 
                 page.goto(URL, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(8000)
 
-                page_valid = False
-
+                # ================= 等待进入真实页面 =================
                 while True:
-                    try:
-                        # ================= Queue 判断 =================
-                        queue_count = page.locator("text=Virtual Waiting Room").count()
-                        if queue_count > 0:
-                            print("⏳ queue中...")
-                            time.sleep(8)
-                            continue
+                    if page.locator("text=Virtual Waiting Room").count() > 0:
+                        print("⏳ queue中...")
+                        time.sleep(5)
+                        continue
 
-                        # ================= 页面是否真正加载 =================
-                        reg_count = page.locator("text=Registration").count()
-
-                        if reg_count > 0:
-                            if not page_valid:
-                                print("✅ 已确认进入真实页面（Registration出现）")
-                                page_valid = True
-                        else:
-                            print("⏳ 还没进入真实页面...")
-                            time.sleep(CHECK_INTERVAL)
-                            continue
-
-                        # ================= 关键检测 =================
-                        occurrences = page.locator(f"text={KEYWORD}").count()
-
-                        print("📊 occurrences:", occurrences)
-
-                        if last_occurrences is None:
-                            last_occurrences = occurrences
-                            time.sleep(CHECK_INTERVAL)
-                            continue
-
-                        now = time.time()
-
-                        # ===== 2 → 1 才通知 =====
-                        if (
-                            last_occurrences == 2 and
-                            occurrences == 1 and
-                            now - last_notify_time > NOTIFY_COOLDOWN
-                        ):
-                            print("🎉 检测到考位！")
-
-                            send_telegram(
-                                "🎉 TCF Canada 可能出现考位！\n\n"
-                                f"当前匹配数: {occurrences}\n\n"
-                                + URL
-                            )
-
-                            last_notify_time = now
-
-                        last_occurrences = occurrences
-
-                        time.sleep(CHECK_INTERVAL)
-
-                    except Exception as e:
-                        print("⚠️ 页面检测异常:", e)
+                    if page.locator("text=Registration").count() > 0:
+                        print("✅ 已进入页面")
                         break
 
-                sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
-                print(f"⏱ 外层休眠 {sleep_time}s")
+                    print("⏳ 等待页面加载...")
+                    time.sleep(5)
+
+                # ================= 短时间确认（避免误判） =================
+                occurrences_list = []
+
+                for _ in range(3):   # 连续检测3次
+                    occurrences = page.locator(f"text={KEYWORD}").count()
+                    occurrences_list.append(occurrences)
+
+                    print("📊 当前 occurrences:", occurrences)
+                    time.sleep(CHECK_INTERVAL)
+
+                # 取“最稳定值”
+                occurrences = max(set(occurrences_list), key=occurrences_list.count)
+
+                print("📊 稳定结果:", occurrences)
+
+                now = time.time()
+
+                # ================= 有位置 =================
+                if occurrences == 1:
+                    if now - last_notify_time > NOTIFY_COOLDOWN:
+                        print("🎉 检测到考位！")
+
+                        send_telegram(
+                            "🎉 TCF Canada 可能出现考位！\n\n"
+                            f"当前匹配数: {occurrences}\n\n"
+                            + URL
+                        )
+
+                        last_notify_time = now
+
+                    # 👉 有位置时可以短间隔再查一次（更激进）
+                    sleep_time = random.randint(30, 60)
+
+                # ================= 没位置 =================
+                else:
+                    print("😴 没有考位，准备离开页面")
+
+                    sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
+
+                print(f"⏱ 下次访问间隔: {sleep_time}s")
                 time.sleep(sleep_time)
 
             except Exception as e:
-                print("❌ 主循环异常:", e)
+                print("❌ 错误:", e)
                 time.sleep(30)
 
 
