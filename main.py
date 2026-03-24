@@ -24,9 +24,10 @@ NOTIFY_COOLDOWN = 100
 # 页面关键词（用于判断是否满位）
 KEYWORD = "No sessions currently available"
 
-# ================= Telegram通知 =================
+
+# ================= Telegram =================
 def send_telegram(msg):
-    """发送Telegram消息"""
+    """发送 Telegram 消息"""
     try:
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -37,7 +38,7 @@ def send_telegram(msg):
         print("Telegram error:", e)
 
 
-# ================= 创建浏览器 =================
+# ================= 浏览器初始化 =================
 def create_browser(p):
     browser = p.chromium.launch(
         headless=True,
@@ -47,15 +48,11 @@ def create_browser(p):
     return browser, context
 
 
-# ================= 页面状态检测 =================
+# ================= 状态判断 =================
 def detect_state(page):
     """
     返回状态：
-    queue   -> 排队中
-    blocked -> 被封
-    loading -> 未加载完整
-    full    -> 没考位
-    open    -> 可能有考位
+    queue / blocked / loading / full / open
     """
 
     text = page.inner_text("body").lower()
@@ -68,9 +65,8 @@ def detect_state(page):
     if "checking your browser" in text or "access denied" in text:
         return "blocked"
 
-    # ===== 关键修复：loading 判断（更严格）=====
-    # 不再只看长度，而是看“关键内容是否存在”
-    if KEYWORD not in text and len(text) < 3000:
+    # ===== Loading =====
+    if len(text) < 2500:
         return "loading"
 
     # ===== 核心判断 =====
@@ -84,27 +80,41 @@ def detect_state(page):
         return "unknown"
 
 
-# ================= Queue等待（不刷新页面） =================
+# ================= ⭐ Queue稳定等待（关键修复） =================
 def wait_queue(page):
     """
-    Queue-Fair 等待逻辑：
-    ❗不 reload
-    ❗不 goto
-    ❗只等待系统自动放行
+    🚨 工业级 queue handler（修复误退出问题）
+
+    核心思想：
+    ❗不能只看一次 DOM
+    ❗必须“连续确认已离开 queue”
     """
 
-    print("⏳ 进入 Queue 等待模式（静默）")
+    print("⏳ 进入 Queue 稳定等待模式（双重确认）")
+
+    exit_confirm_counter = 0  # ⭐关键：连续脱离计数
 
     while True:
         try:
             text = page.inner_text("body").lower()
 
-            # 离开 queue
-            if "queue-fair" not in text and "virtual waiting room" not in text:
-                print("🚀 已离开 Queue")
-                return
+            in_queue = ("queue-fair" in text or "virtual waiting room" in text)
 
-            print("⏳ queue waiting...")
+            # ================= 仍在 queue =================
+            if in_queue:
+                exit_confirm_counter = 0
+                print("⏳ queue waiting...")
+                time.sleep(QUEUE_CHECK_INTERVAL)
+                continue
+
+            # ================= 可能已离开 queue =================
+            exit_confirm_counter += 1
+            print(f"🔎 queue exit check {exit_confirm_counter}/2")
+
+            # ⭐必须连续2次确认离开 queue 才算真正退出
+            if exit_confirm_counter >= 2:
+                print("🚀 已确认离开 Queue（稳定退出）")
+                return
 
             time.sleep(QUEUE_CHECK_INTERVAL)
 
@@ -115,9 +125,9 @@ def wait_queue(page):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v10 (Loading Fix + Stable Industrial Edition)")
+    print("🔥 TCF Monitor v11 (Industrial Stable Queue Fix)")
 
-    send_telegram("🚀 TCF Monitor v10 启动（loading修复+工业稳定版）")
+    send_telegram("🚀 TCF Monitor v11 启动（Queue稳定修复版）")
 
     last_state = None
     last_notify_time = 0
@@ -130,14 +140,13 @@ def main():
             try:
                 print("\n💓 cycle start")
 
-                # ================= 页面加载（关键修复） =================
+                # ================= 页面加载 =================
                 try:
                     page.goto(URL, wait_until="networkidle", timeout=60000)
                 except:
-                    # fallback 防止 networkidle 卡死
                     page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-                page.wait_for_timeout(5000)
+                page.wait_for_timeout(4000)
 
                 state = detect_state(page)
 
@@ -154,7 +163,7 @@ def main():
 
                 # ================= LOADING =================
                 if state == "loading":
-                    print("⏳ loading... retry later")
+                    print("⏳ loading")
                     time.sleep(20)
                     continue
 
@@ -182,7 +191,7 @@ def main():
 
                 last_state = state
 
-                # ================= 随机延迟（防封） =================
+                # ================= 随机延迟 =================
                 sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
                 print(f"⏱ sleep {sleep_time}s")
                 time.sleep(sleep_time)
