@@ -15,6 +15,7 @@ FAIL_LIMIT = 3
 # 防重复通知（1.5分钟冷却）
 NOTIFY_COOLDOWN = 90
 
+
 # ================= Telegram =================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -70,26 +71,34 @@ def check_page(context):
             html = page.content()
             print("🔍 html length:", len(html))
 
-            # ⚠️ 提前获取文本（后面用于判断）
             text = page.inner_text("body")
 
-            # ================= NEW: 检测排队 / 风控 / 异常页面 =================
-            if (
-                len(html) < 20000 or
+            # ================= NEW: 更严格 BLOCKED 判断 =================
+            strong_block = (
                 "Checking your browser" in text or
-                "Please wait" in text or
-                "queue" in text.lower() or
-                "access denied" in text.lower()
-            ):
-                print("🚨 BLOCKED / QUEUE detected")
+                "Access denied" in text or
+                "queue" in text.lower()
+            )
+
+            weak_block = len(html) < 8000
+
+            if strong_block:
+                print("🚨 STRONG BLOCK detected")
                 page.close()
                 return {"status": "blocked"}
+
+            if weak_block:
+                print("⚠️ weak block detected")
+                page.close()
+                return {"status": "weak_block"}
 
             if len(html) < 500:
                 raise Exception("page too small")
 
             if "Registration" not in text:
-                raise Exception("page not ready")
+                print("⚠️ Registration not found")
+                page.close()
+                return {"status": "not_ready"}
 
             count = page.locator("text=No sessions currently available").count()
 
@@ -123,6 +132,8 @@ def main():
     last_notify_time = 0
     fail_count = 0
 
+    weak_block_count = 0  # ✅ 新增
+
     with sync_playwright() as p:
 
         browser, context = create_browser(p)
@@ -138,20 +149,41 @@ def main():
 
                 result = check_page(context)
 
-                # ================= NEW: BLOCKED（关键新增逻辑） =================
+                # ================= BLOCKED（强）=================
                 if result["status"] == "blocked":
                     now = time.time()
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
                         send_telegram(
-                            "🚨 TCF Canada 页面异常（疑似放位/排队中）！\n\n"
-                            "可能已经出现考位，请立即手动查看！\n\n"
+                            "🚨 TCF Canada 页面被拦截（强信号）！\n\n"
                             f"{URL}"
                         )
                         last_notify_time = now
 
                     time.sleep(CHECK_INTERVAL)
                     continue
+
+                # ================= BLOCKED（弱，需要连续）=================
+                if result["status"] == "weak_block":
+                    weak_block_count += 1
+                    print(f"⚠️ weak block count: {weak_block_count}")
+
+                    if weak_block_count >= 2:
+                        now = time.time()
+
+                        if now - last_notify_time > NOTIFY_COOLDOWN:
+                            send_telegram(
+                                "⚠️ TCF Canada 页面异常（连续加载异常）\n\n"
+                                f"{URL}"
+                            )
+                            last_notify_time = now
+
+                        weak_block_count = 0
+
+                    time.sleep(CHECK_INTERVAL)
+                    continue
+                else:
+                    weak_block_count = 0
 
                 # ================= fail =================
                 if result["status"] != "ok":
