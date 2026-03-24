@@ -5,135 +5,116 @@ import json
 from playwright.sync_api import sync_playwright
 
 # ================= 配置 =================
-URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
-
 BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyXI"
 CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 
-CHECK_INTERVAL = 60  # 每60秒检查一次
+URLS = [
+    "https://www.alliance-francaise.ca/api/groupcourses?enddate=gte&limit=150&openspaces=1&orderby=course.startDate&othercategory=368&status=0",
+    "https://www.alliance-francaise.ca/api/groupcourses?enddate=gte&limit=150&openspaces=1&orderby=course.startDate&othercategory=367&status=0"
+]
 
+CHECK_INTERVAL = 60
+NOTIFY_COOLDOWN = 120  # 防刷屏
 
-URLS = {
-    "367": "https://www.alliance-francaise.ca/api/groupcourses?enddate=gte&limit=150&openspaces=1&orderby=course.startDate&othercategory=367&status=0",
-    "368": "https://www.alliance-francaise.ca/api/groupcourses?enddate=gte&limit=150&openspaces=1&orderby=course.startDate&othercategory=368&status=0"
-}
 
 # ================= Telegram =================
 def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": CHAT_ID,
-            "text": msg
-        }, timeout=10)
-        print("📲 Telegram sent")
+        r = requests.post(
+            url,
+            data={"chat_id": CHAT_ID, "text": msg},
+            timeout=10
+        )
+        print("📲 Telegram:", r.text)
     except Exception as e:
         print("❌ Telegram error:", e)
 
 
-# ================= 获取API数据 =================
-def fetch_courses(url):
-    r = requests.get(url, timeout=15)
-    data = r.json()
-    return data.get("courses", [])
+# ================= 拉 API =================
+def fetch(url):
+    try:
+        r = requests.get(url, timeout=15)
+        return r.json()
+    except Exception as e:
+        print("❌ fetch error:", url, e)
+        return None
 
 
-# ================= 判断是否有考位 =================
-def has_slots(courses):
-    """
-    判断逻辑：
-    - courses 不为空
-    - 或 openSpaces > 0
-    """
-    for c in courses:
-        try:
-            if c.get("openSpaces", 0) > 0:
-                return True
-        except:
-            continue
-    return False
+# ================= 检查单个 API =================
+def check_api(data):
+    if not data:
+        return 0
+
+    items = data.get("items", [])
+    total = data.get("totalItems", 0)
+
+    return max(len(items), int(total))
 
 
 # ================= 主逻辑 =================
 def check_all():
+    total = 0
 
-    results = {}
-    total_slots = 0
+    for url in URLS:
+        data = fetch(url)
+        count = check_api(data)
 
-    for key, url in URLS.items():
-        try:
-            courses = fetch_courses(url)
+        print("🔎 count:", count, "|", url)
 
-            slots = has_slots(courses)
-            count = len(courses)
+        total += count
 
-            results[key] = {
-                "slots": slots,
-                "count": count
-            }
-
-            if slots:
-                total_slots += 1
-
-            print(f"📊 category {key}: count={count}, slots={slots}")
-
-        except Exception as e:
-            print(f"❌ category {key} error:", e)
-            results[key] = {"slots": False, "count": 0}
-
-    return results, total_slots
+    return total
 
 
-# ================= 主循环 =================
+# ================= 主程序 =================
 def main():
+    print("🔥 TCF API monitor started (production v1)")
 
-    print("🔥 TCF API monitor started (FINAL PROD VERSION)")
+    send_telegram("🚀 TCF Monitor 已启动（API生产版）")
 
-    send_telegram("🚀 TCF Monitor 启动（API稳定生产版）")
-
-    last_state = None
+    last_total = None
+    last_notify = 0
 
     while True:
         try:
-            results, total_slots = check_all()
+            current_total = check_all()
 
-            # 当前状态hash（用于防重复通知）
-            state = json.dumps(results, sort_keys=True)
+            print("📊 TOTAL:", current_total)
 
-            print("📦 total categories with slots:", total_slots)
+            now = time.time()
 
-            # ================= 初始化 =================
-            if last_state is None:
-                last_state = state
+            # ========== 初始化 ==========
+            if last_total is None:
+                last_total = current_total
                 time.sleep(CHECK_INTERVAL)
                 continue
 
-            # ================= 检测变化 =================
-            if state != last_state and total_slots > 0:
+            # ========== 有变化 ==========
+            changed = current_total != last_total
+            improved = current_total > last_total
 
-                print("🎉 SLOT DETECTED!")
+            if changed and improved:
+                if now - last_notify > NOTIFY_COOLDOWN:
 
-                msg = "🎉 TCF Canada 发现考位！\n\n"
+                    print("🎉 NEW SLOTS DETECTED!")
 
-                for k, v in results.items():
-                    if v["slots"]:
-                        msg += f"✔ Category {k}: 有空位 ({v['count']} courses)\n"
-                    else:
-                        msg += f"✖ Category {k}: 无\n"
+                    send_telegram(
+                        "🎉 TCF Canada 出现新考位！\n\n"
+                        f"之前: {last_total}\n现在: {current_total}\n\n"
+                        "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
+                    )
 
-                msg += "\nhttps://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
+                    last_notify = now
 
-                send_telegram(msg)
+                last_total = current_total
 
-                last_state = state
-
-            else:
-                print("⏳ no change")
-
-                last_state = state
+            # ========== 更新 ==========
+            last_total = current_total
 
         except Exception as e:
-            print("❌ main loop error:", e)
+            print("❌ loop error:", e)
 
         time.sleep(CHECK_INTERVAL)
 
