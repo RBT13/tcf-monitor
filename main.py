@@ -18,7 +18,7 @@ MAX_INTERVAL = 300
 CHECK_INTERVAL = 10
 NOTIFY_COOLDOWN = 120
 
-KEYWORD = "no sessions currently available"
+KEYWORD = "No sessions currently available"
 
 
 # ================= Telegram =================
