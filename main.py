@@ -66,44 +66,34 @@ def check_page(context):
             })
 
             page.goto(URL, timeout=60000, wait_until="domcontentloaded")
-
-            # ================= 等待页面真正加载（关键）=================
-            for _ in range(3):
-                page.wait_for_timeout(3000)
-                text = page.inner_text("body")
-
-                if "with registration opening one month before each session." in text:
-                    break
-
-                print("⏳ 等待页面JS加载...")
+            page.wait_for_timeout(5000)
 
             html = page.content()
             print("🔍 html length:", len(html))
 
             text = page.inner_text("body")
 
-            # ================= BLOCKED 强判断 =================
+            # ================= BLOCKED 强判断（修复）=================
             if (
                 "Checking your browser" in text or
-                "Access denied" in text or
-                "queue" in text.lower()
+                "Access denied" in text
             ):
                 print("🚨 STRONG BLOCK detected")
                 page.close()
                 return {"status": "blocked"}
 
-            # ================= 页面未加载完成 =================
-            if "with registration opening one month before each session." not in text:
-                print("⚠️ page not fully loaded")
+            # ================= 页面是否正常（关键修复）=================
+            if len(html) < 60000:
+                print("⚠️ 页面过小，可能异常")
                 page.close()
                 return {"status": "loading"}
 
-            # ================= 页面正常后再判断 =================
             if "Registration" not in text:
-                print("⚠️ Registration not found (但页面已加载)")
+                print("⚠️ Registration 未加载（可能JS问题）")
                 page.close()
-                return {"status": "not_ready"}
+                return {"status": "loading"}
 
+            # ================= 正常检测 =================
             count = page.locator("text=No sessions currently available").count()
 
             print("🔎 No sessions count:", count)
@@ -167,7 +157,7 @@ def main():
 
                 # ================= loading（不报警）=================
                 if result["status"] == "loading":
-                    print("⏳ 页面加载中，跳过")
+                    print("⏳ 页面未准备好，跳过")
                     time.sleep(CHECK_INTERVAL)
                     continue
 
