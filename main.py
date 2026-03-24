@@ -18,7 +18,8 @@ MAX_INTERVAL = 300
 CHECK_INTERVAL = 10
 NOTIFY_COOLDOWN = 120
 
-KEYWORD = "no sessions currently available"
+KEYWORD = "No sessions currently available"
+
 
 
 # ================= Telegram =================
@@ -35,9 +36,9 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v18（最终稳定修复版）")
+    print("🔥 TCF Monitor v19（最终稳定定位版）")
 
-    send_telegram("🚀 TCF Monitor v18 启动")
+    send_telegram("🚀 TCF Monitor v19 启动")
 
     last_occurrences = None
     last_notify_time = 0
@@ -57,34 +58,34 @@ def main():
                 page.goto(URL, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(8000)
 
-                page_valid = False  # ⭐关键
+                page_valid = False
 
                 while True:
                     try:
-                        text = page.inner_text("body").lower()
-
-                        # ================= queue =================
-                        if "virtual waiting room" in text or "queue-fair" in text:
-                            print("⏳ queue中，等待放行...")
+                        # ================= Queue 判断 =================
+                        queue_count = page.locator("text=Virtual Waiting Room").count()
+                        if queue_count > 0:
+                            print("⏳ queue中...")
                             time.sleep(8)
                             continue
 
-                        # ================= 页面加载完成判断（关键修复） =================
-                        if not page_valid:
-                            if "registration" in text:
-                                page_valid = True
-                                print("✅ 页面已加载完成（检测到 registration）")
-                            else:
-                                print("⏳ 页面还未加载完成...")
-                                time.sleep(CHECK_INTERVAL)
-                                continue
+                        # ================= 页面是否真正加载 =================
+                        reg_count = page.locator("text=Registration").count()
 
-                        # ================= keyword检测 =================
-                        occurrences = text.count(KEYWORD)
+                        if reg_count > 0:
+                            if not page_valid:
+                                print("✅ 已确认进入真实页面（Registration出现）")
+                                page_valid = True
+                        else:
+                            print("⏳ 还没进入真实页面...")
+                            time.sleep(CHECK_INTERVAL)
+                            continue
+
+                        # ================= 关键检测 =================
+                        occurrences = page.locator(f"text={KEYWORD}").count()
 
                         print("📊 occurrences:", occurrences)
 
-                        # ===== 初始化 =====
                         if last_occurrences is None:
                             last_occurrences = occurrences
                             time.sleep(CHECK_INTERVAL)
@@ -92,7 +93,7 @@ def main():
 
                         now = time.time()
 
-                        # ===== 核心逻辑 =====
+                        # ===== 2 → 1 才通知 =====
                         if (
                             last_occurrences == 2 and
                             occurrences == 1 and
@@ -113,7 +114,7 @@ def main():
                         time.sleep(CHECK_INTERVAL)
 
                     except Exception as e:
-                        print("⚠️ 页面异常:", e)
+                        print("⚠️ 页面检测异常:", e)
                         break
 
                 sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
