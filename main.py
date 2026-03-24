@@ -1,6 +1,7 @@
 import time
 import random
 import requests
+import json
 from playwright.sync_api import sync_playwright
 
 # ================= 配置 =================
@@ -9,193 +10,132 @@ URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-c
 BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyXI"
 CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 
-CHECK_INTERVAL = 90
-FAIL_LIMIT = 3
+CHECK_INTERVAL = 60  # 每60秒检查一次
 
-# 防重复通知（1.5分钟冷却）
-NOTIFY_COOLDOWN = 180
 
+URLS = {
+    "367": "https://www.alliance-francaise.ca/api/groupcourses?enddate=gte&limit=150&openspaces=1&orderby=course.startDate&othercategory=367&status=0",
+    "368": "https://www.alliance-francaise.ca/api/groupcourses?enddate=gte&limit=150&openspaces=1&orderby=course.startDate&othercategory=368&status=0"
+}
 
 # ================= Telegram =================
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
     try:
-        r = requests.post(
-            url,
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=10
-        )
-        print("📲 Telegram response:", r.text)
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        }, timeout=10)
+        print("📲 Telegram sent")
     except Exception as e:
         print("❌ Telegram error:", e)
 
 
-# ================= browser 重建 =================
-def create_browser(p):
-    print("♻️ launching browser...")
-
-    browser = p.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--single-process"
-        ]
-    )
-
-    context = browser.new_context()
-    return browser, context
+# ================= 获取API数据 =================
+def fetch_courses(url):
+    r = requests.get(url, timeout=15)
+    data = r.json()
+    return data.get("courses", [])
 
 
-# ================= 检查页面 =================
-def check_page(context):
-    page = None
-
-    for attempt in range(2):
+# ================= 判断是否有考位 =================
+def has_slots(courses):
+    """
+    判断逻辑：
+    - courses 不为空
+    - 或 openSpaces > 0
+    """
+    for c in courses:
         try:
-            page = context.new_page()
+            if c.get("openSpaces", 0) > 0:
+                return True
+        except:
+            continue
+    return False
 
-            page.set_extra_http_headers({
-                "User-Agent": random.choice([
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/119 Safari/537.36",
-                    "Mozilla/5.0 (X11; Linux x86_64) Chrome/118 Safari/537.36"
-                ])
-            })
 
-            page.goto(URL, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_timeout(5000)
+# ================= 主逻辑 =================
+def check_all():
 
-            html = page.content()
-            print("🔍 html length:", len(html))
+    results = {}
+    total_slots = 0
 
-            text = page.inner_text("body")
+    for key, url in URLS.items():
+        try:
+            courses = fetch_courses(url)
 
-            # ================= BLOCKED 判断 =================
-            if (
-                "Checking your browser" in text or
-                "Access denied" in text
-            ):
-                print("🚨 STRONG BLOCK detected")
-                page.close()
-                return {"status": "blocked"}
+            slots = has_slots(courses)
+            count = len(courses)
 
-            # ================= 核心修复：直接尝试查 count =================
-            count = page.locator("text=No sessions currently available").count()
+            results[key] = {
+                "slots": slots,
+                "count": count
+            }
 
-            print("🔎 No sessions count:", count)
+            if slots:
+                total_slots += 1
 
-            # 如果能找到这个元素，就说明页面是可用的
-            if count >= 0:
-                page.close()
-                return {"status": "ok", "count": count}
-
-            # ================= fallback =================
-            print("⚠️ 未找到关键信息，可能页面异常")
-            page.close()
-            return {"status": "loading"}
+            print(f"📊 category {key}: count={count}, slots={slots}")
 
         except Exception as e:
-            print(f"❌ attempt {attempt+1} failed:", e)
+            print(f"❌ category {key} error:", e)
+            results[key] = {"slots": False, "count": 0}
 
-            try:
-                if page:
-                    page.close()
-            except:
-                pass
-
-            time.sleep(2 + attempt * 2)
-
-    print("🚨 check_page totally failed")
-    return {"status": "error"}
+    return results, total_slots
 
 
-# ================= 主程序 =================
+# ================= 主循环 =================
 def main():
-    print("🔥 TCF monitor started (Railway production stable v2)")
 
-    send_telegram("🚀 TCF Monitor 已启动（Railway稳定v2）")
+    print("🔥 TCF API monitor started (FINAL PROD VERSION)")
 
-    last_count = None
-    last_notify_time = 0
-    fail_count = 0
+    send_telegram("🚀 TCF Monitor 启动（API稳定生产版）")
 
-    with sync_playwright() as p:
+    last_state = None
 
-        browser, context = create_browser(p)
+    while True:
+        try:
+            results, total_slots = check_all()
 
-        while True:
-            print("\n💓 alive ping")
+            # 当前状态hash（用于防重复通知）
+            state = json.dumps(results, sort_keys=True)
 
-            try:
-                # ================= browser health check =================
-                if not browser.is_connected():
-                    print("⚠️ browser dead -> restarting")
-                    browser, context = create_browser(p)
+            print("📦 total categories with slots:", total_slots)
 
-                result = check_page(context)
+            # ================= 初始化 =================
+            if last_state is None:
+                last_state = state
+                time.sleep(CHECK_INTERVAL)
+                continue
 
-                # ================= BLOCKED =================
-                if result["status"] == "blocked":
-                    now = time.time()
+            # ================= 检测变化 =================
+            if state != last_state and total_slots > 0:
 
-                    if now - last_notify_time > NOTIFY_COOLDOWN:
-                        send_telegram(
-                            "🚨 TCF Canada 页面被拦截（高优先级）\n\n"
-                            f"{URL}"
-                        )
-                        last_notify_time = now
+                print("🎉 SLOT DETECTED!")
 
-                    time.sleep(CHECK_INTERVAL)
-                    continue
+                msg = "🎉 TCF Canada 发现考位！\n\n"
 
-                # ================= loading =================
-                if result["status"] == "loading":
-                    print("⏳ 页面异常但继续监控")
-                    time.sleep(CHECK_INTERVAL)
-                    continue
+                for k, v in results.items():
+                    if v["slots"]:
+                        msg += f"✔ Category {k}: 有空位 ({v['count']} courses)\n"
+                    else:
+                        msg += f"✖ Category {k}: 无\n"
 
-                # ================= 正常逻辑 =================
-                fail_count = 0
-                now = time.time()
+                msg += "\nhttps://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-canada/tcf-canada"
 
-                current_count = result["count"]
+                send_telegram(msg)
 
-                print("📊 status:", current_count)
+                last_state = state
 
-                if last_count is None:
-                    last_count = current_count
-                    time.sleep(CHECK_INTERVAL)
-                    continue
+            else:
+                print("⏳ no change")
 
-                changed = current_count != last_count
-                improved = current_count < last_count
+                last_state = state
 
-                if changed and improved and (now - last_notify_time > NOTIFY_COOLDOWN):
-                    print("🎉 CHANGE detected!")
+        except Exception as e:
+            print("❌ main loop error:", e)
 
-                    send_telegram(
-                        "🎉 TCF Canada 可能出现考位变化！\n\n"
-                        f"之前: {last_count}\n现在: {current_count}\n\n{URL}"
-                    )
-
-                    last_notify_time = now
-
-                last_count = current_count
-
-            except Exception as e:
-                print("❌ loop crash:", e)
-
-                try:
-                    browser.close()
-                except:
-                    pass
-
-                browser, context = create_browser(p)
-
-            time.sleep(CHECK_INTERVAL)
+        time.sleep(CHECK_INTERVAL)
 
 
 if __name__ == "__main__":
