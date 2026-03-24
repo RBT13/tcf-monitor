@@ -37,97 +37,111 @@ def send_telegram(msg):
         print("Telegram error:", e)
 
 
-# ================= browser =================
+# ================= 浏览器 =================
 def create_browser(p):
     browser = p.chromium.launch(
         headless=True,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        args=["--no-sandbox", "--disable-dev-shm-usage"]
     )
-    context = browser.new_context()
-    return browser, context
+    return browser, browser.new_context()
 
 
-# ================= ⭐ 稳定页面读取（关键修复） =================
-def get_stable_text(page):
+# ================= ⭐ 真正 queue 检测（可见元素） =================
+def in_queue(page):
+    try:
+        queue_visible = page.locator("text=Queue-Fair").first.is_visible(timeout=2000)
+    except:
+        queue_visible = False
+
+    try:
+        waiting_visible = page.locator("text=Virtual Waiting Room").first.is_visible(timeout=2000)
+    except:
+        waiting_visible = False
+
+    return queue_visible or waiting_visible
+
+
+# ================= ⭐ 主内容检测 =================
+def get_state(page):
     """
-    工业级稳定读取：
-    - 等 DOM 稳定
-    - 防止 loading 假状态
-    """
-
-    page.wait_for_timeout(3000)
-
-    text1 = page.inner_text("body").lower()
-    page.wait_for_timeout(2000)
-    text2 = page.inner_text("body").lower()
-
-    # 如果两次一致 → 说明页面稳定
-    if text1 == text2:
-        return text2
-
-    # 不稳定 → 再等一次
-    page.wait_for_timeout(2000)
-    return page.inner_text("body").lower()
-
-
-# ================= 状态判断 =================
-def detect_state(text):
-    """
-    queue / blocked / full / open
+    返回：
+    queue / open / full / unknown
     """
 
-    # ===== queue =====
-    if "queue-fair" in text or "virtual waiting room" in text:
+    # ===== queue（必须可见层）=====
+    if in_queue(page):
         return "queue"
+
+    text = page.inner_text("body").lower()
 
     # ===== blocked =====
     if "checking your browser" in text or "access denied" in text:
         return "blocked"
 
-    # ===== 核心逻辑 =====
-    occurrences = text.count(KEYWORD)
-
-    if occurrences >= 2:
+    # ===== 核心 =====
+    if KEYWORD in text:
         return "full"
-    elif occurrences == 0:
+
+    if "registration" in text or "sessions" in text:
         return "open"
-    else:
-        return "unknown"
+
+    return "unknown"
 
 
-# ================= Queue等待 =================
+# ================= ⭐ 防 bounce 状态机 =================
+def stable_state(page, get_fn, required=3):
+    """
+    必须连续 N 次状态一致才允许切换
+    """
+
+    last = None
+    count = 0
+
+    for _ in range(required):
+        state = get_fn(page)
+
+        if state == last:
+            count += 1
+        else:
+            count = 1
+            last = state
+
+        time.sleep(2)
+
+    return last
+
+
+# ================= Queue等待（稳定版） =================
 def wait_queue(page):
-    print("⏳ Queue模式（稳定等待，不刷新）")
+    print("⏳ 进入 Queue（稳定等待）")
 
     stable_exit = 0
 
     while True:
-        text = page.inner_text("body").lower()
-
-        if "queue-fair" in text or "virtual waiting room" in text:
+        if in_queue(page):
             stable_exit = 0
             print("⏳ queue waiting...")
-            time.sleep(QUEUE_CHECK_INTERVAL)
+            time.sleep(QUEUE_WAIT)
             continue
 
         stable_exit += 1
-        print(f"🔎 queue exit confirm {stable_exit}/2")
+        print(f"🔎 queue exit confirm {stable_exit}/3")
 
-        if stable_exit >= 2:
-            print("🚀 确认离开 queue")
+        if stable_exit >= 3:
+            print("🚀 确认稳定离开 queue")
             return
 
-        time.sleep(QUEUE_CHECK_INTERVAL)
+        time.sleep(QUEUE_WAIT)
 
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v12 (Stable DOM + No loading bug)")
+    print("🔥 TCF Monitor v13 (Anti-bounce + Visible Queue Fix)")
 
-    send_telegram("🚀 TCF Monitor v12 启动（DOM稳定修复版）")
+    send_telegram("🚀 TCF Monitor v13 启动（最终稳定版）")
 
     last_state = None
-    last_notify_time = 0
+    last_notify = 0
 
     with sync_playwright() as p:
         browser, context = create_browser(p)
@@ -137,13 +151,11 @@ def main():
             try:
                 print("\n💓 cycle start")
 
-                # ================= 页面加载 =================
                 page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(4000)
 
-                # ⭐关键修复：稳定读取 DOM（解决你 loading 问题）
-                text = get_stable_text(page)
-
-                state = detect_state(text)
+                # ⭐ 核心：稳定状态检测（防 bounce）
+                state = stable_state(page, get_state)
 
                 # ================= queue =================
                 if state == "queue":
@@ -169,13 +181,13 @@ def main():
                 changed = state != last_state
                 improved = last_state == "full" and state == "open"
 
-                if changed and improved and (now - last_notify_time > NOTIFY_COOLDOWN):
+                if changed and improved and (now - last_notify > NOTIFY_COOLDOWN):
                     send_telegram(
-                        "🎉 TCF Canada 可能出现考位！\n\n"
+                        "🎉 TCF Canada 可能有新考位！\n\n"
                         f"{last_state} → {state}\n\n"
                         + URL
                     )
-                    last_notify_time = now
+                    last_notify = now
 
                 last_state = state
 
