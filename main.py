@@ -15,12 +15,7 @@ URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-c
 MIN_INTERVAL = 180
 MAX_INTERVAL = 300
 
-# 页面内检测频率
 CHECK_INTERVAL = 10
-
-# ⭐ 改成 DOM 长度（不是 HTML）
-MIN_VALID_LENGTH = 50000   # 你说页面是 80k+
-
 NOTIFY_COOLDOWN = 120
 
 KEYWORD = "no sessions currently available"
@@ -40,9 +35,9 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v16（DOM长度判定终极版）")
+    print("🔥 TCF Monitor v17（最终稳定版）")
 
-    send_telegram("🚀 TCF Monitor v16 启动（DOM长度版）")
+    send_telegram("🚀 TCF Monitor v17 启动")
 
     last_occurrences = None
     last_notify_time = 0
@@ -60,35 +55,36 @@ def main():
                 print("\n💓 新一轮进入页面")
 
                 page.goto(URL, wait_until="domcontentloaded", timeout=60000)
-
-                # ⭐ 关键：等待JS渲染
                 page.wait_for_timeout(8000)
+
+                page_valid = False   # ⭐关键状态
 
                 while True:
                     try:
-                        # ================= 核心修复 =================
-                        dom = page.inner_html("body")
-                        dom_len = len(dom)
+                        text = page.inner_text("body").lower()
 
-                        print("📏 DOM length:", dom_len)
-
-                        # ===== 页面未渲染完成 =====
-                        if dom_len < MIN_VALID_LENGTH:
-                            print("⏳ DOM未加载完成 / queue / loading")
-                            time.sleep(CHECK_INTERVAL)
+                        # ================= queue检测 =================
+                        if "virtual waiting room" in text or "queue-fair" in text:
+                            print("⏳ queue中，等待放行...")
+                            time.sleep(8)
                             continue
 
-                        # ===== 页面正常 =====
-                        text = page.inner_text("body").lower()
+                        # ================= keyword检测 =================
                         occurrences = text.count(KEYWORD)
 
                         print("📊 occurrences:", occurrences)
 
-                        if occurrences == 0:
-                            print("⚠️ 关键词未出现（DOM可能刚更新）")
+                        # ===== 页面第一次成功 =====
+                        if occurrences >= 1:
+                            page_valid = True
+
+                        # ===== 如果从未成功过，继续等 =====
+                        if not page_valid:
+                            print("⏳ 等待页面真正加载完成...")
                             time.sleep(CHECK_INTERVAL)
                             continue
 
+                        # ===== 初始化 =====
                         if last_occurrences is None:
                             last_occurrences = occurrences
                             time.sleep(CHECK_INTERVAL)
@@ -96,7 +92,7 @@ def main():
 
                         now = time.time()
 
-                        # ⭐ 核心逻辑：2 → 1 才通知
+                        # ===== 核心逻辑 =====
                         if (
                             last_occurrences == 2 and
                             occurrences == 1 and
@@ -117,7 +113,7 @@ def main():
                         time.sleep(CHECK_INTERVAL)
 
                     except Exception as e:
-                        print("⚠️ 页面检测异常:", e)
+                        print("⚠️ 页面异常:", e)
                         break
 
                 sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
