@@ -18,17 +18,17 @@ API_URLS = [
 
 
 # ================= STATE =================
-base_interval = 240   # ⭐ 4 min start
+base_interval = 240   # 4 min
 min_interval = 180    # 3 min
-max_interval = 360    # 6 min
+max_interval = 420    # 7 min
 
+session = requests.Session()
 last_notify = 0
 
 
 # ================= TELEGRAM =================
 def send(msg):
     try:
-        import requests
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg},
@@ -38,7 +38,19 @@ def send(msg):
         pass
 
 
-# ================= BROWSER SESSION =================
+# ================= SESSION REFRESH =================
+def refresh_requests_session():
+    global session
+
+    print("♻️ refreshing requests session...")
+
+    try:
+        session = requests.Session()
+    except:
+        pass
+
+
+# ================= PLAYWRIGHT BOOT =================
 def create_browser():
     p = sync_playwright().start()
 
@@ -48,115 +60,143 @@ def create_browser():
     )
 
     context = browser.new_context()
+
     page = context.new_page()
+    page.goto(URL, wait_until="domcontentloaded")
+    page.wait_for_timeout(4000)
 
     return p, browser, context, page
 
 
-def init_page(page):
-    print("🌐 loading main page...")
-    page.goto(URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(5000)
-
-
-# ================= BROWSER-BASED API CALL =================
-def fetch_api(page, url):
+# ================= PRIMARY (BROWSER REQUEST) =================
+def fetch_primary(context, url):
     try:
-        result = page.evaluate(
-            """async (url) => {
-                try {
-                    const res = await fetch(url, {
-                        method: 'GET',
-                        credentials: 'include',
-                        headers: {
-                            'accept': 'application/json, text/plain, */*'
-                        }
-                    });
-                    const text = await res.text();
-                    return { status: res.status, text };
-                } catch (e) {
-                    return { status: 0, text: '' };
-                }
-            }""",
-            url
-        )
+        resp = context.request.get(url)
 
-        print("🔎 status:", result["status"])
-
-        if result["status"] != 200:
+        if resp.status != 200:
+            print("🔎 primary status:", resp.status)
             return None
 
-        if not result["text"] or len(result["text"]) < 10:
+        text = resp.text()
+
+        if not text or len(text) < 10:
             return None
 
-        return result["text"]
+        return text
 
     except Exception as e:
-        print("❌ fetch error:", e)
+        print("❌ primary error:", e)
+        return None
+
+
+# ================= FALLBACK (REQUESTS) =================
+def fetch_fallback(url):
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 Chrome/120",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": URL
+        }
+
+        r = session.get(url, headers=headers, timeout=15)
+
+        print("🔎 fallback status:", r.status_code)
+
+        if r.status_code != 200:
+            return None
+
+        if not r.text or len(r.text) < 10:
+            return None
+
+        return r.text
+
+    except Exception as e:
+        print("❌ fallback error:", e)
         return None
 
 
 # ================= PARSE =================
-def parse_json(text):
+def parse(text):
     try:
         import json
         data = json.loads(text)
+
         items = data.get("items", [])
         total = data.get("totalItems", 0)
+
         return max(len(items), int(total))
+
     except:
         return 0
 
 
-# ================= CHECK =================
-def check_all(page):
+# ================= DUAL CHECK =================
+def check_all(context):
     total = 0
+    used_fallback = False
 
     for url in API_URLS:
-        text = fetch_api(page, url)
-        count = parse_json(text)
+
+        # 🥇 PRIMARY
+        text = fetch_primary(context, url)
+
+        # 🥈 FALLBACK
+        if text is None:
+            used_fallback = True
+            text = fetch_fallback(url)
+
+        count = parse(text)
 
         print("🔎 count:", count)
         total += count
 
-    return total
+    return total, used_fallback
 
 
 # ================= ADAPTIVE INTERVAL =================
-def get_interval(last, current):
+def get_interval(last, current, fallback_used):
     global base_interval
 
-    jitter = random.randint(-30, 30)
+    jitter = random.randint(-40, 40)
 
-    # change detection
     changed = (last is not None and current != last)
 
+    # ⚠️ fallback used → increase safety delay
+    if fallback_used:
+        base_interval += 30
+
+    # change behavior
     if changed:
         base_interval = max(min_interval, base_interval - 10)
     else:
         base_interval = min(max_interval, base_interval + 10)
 
-    return max(min_interval, min(max_interval, base_interval + jitter))
+    # clamp
+    base_interval = max(min_interval, min(max_interval, base_interval))
+
+    return base_interval + jitter
 
 
 # ================= MAIN =================
 def main():
     global last_notify
 
-    print("🚀 Browser-native monitor started (anti-202 stable mode)")
+    print("🚀 Dual-protection monitor started")
 
-    send("🚀 TCF Monitor 启动（Browser-native 稳定版）")
+    send("🚀 TCF Monitor 启动（双保险稳定版）")
+
+    refresh_requests_session()
 
     p, browser, context, page = create_browser()
-    init_page(page)
 
     last = None
 
     try:
         while True:
-            current = check_all(page)
 
-            print("📊 TOTAL:", current)
+            current, fallback_used = check_all(context)
+
+            print("📊 TOTAL:", current, "| fallback:", fallback_used)
 
             now = time.time()
 
@@ -164,7 +204,7 @@ def main():
             if last is not None and current > last:
                 if now - last_notify > 180:
                     send(
-                        "🎉 TCF Canada 出现更新！\n\n"
+                        "🎉 TCF Canada 更新！\n\n"
                         f"之前: {last}\n现在: {current}"
                     )
                     last_notify = now
@@ -172,7 +212,9 @@ def main():
             last = current
 
             # ================= interval =================
-            interval = get_interval(last, current)
+            interval = get_interval(last, current, fallback_used)
+
+            interval = max(min_interval, min(max_interval, interval))
 
             print(f"⏱ next check in {interval:.1f}s")
             time.sleep(interval)
@@ -181,8 +223,11 @@ def main():
         print("❌ fatal error:", e)
 
     finally:
-        browser.close()
-        p.stop()
+        try:
+            browser.close()
+            p.stop()
+        except:
+            pass
 
 
 if __name__ == "__main__":
