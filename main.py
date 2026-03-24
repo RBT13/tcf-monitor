@@ -18,7 +18,7 @@ MAX_INTERVAL = 300
 CHECK_INTERVAL = 10
 NOTIFY_COOLDOWN = 120
 
-KEYWORD = "No sessions currently available"
+KEYWORD = "no sessions currently available"
 
 
 # ================= Telegram =================
@@ -35,9 +35,9 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v17（最终稳定版）")
+    print("🔥 TCF Monitor v18（最终稳定修复版）")
 
-    send_telegram("🚀 TCF Monitor v17 启动")
+    send_telegram("🚀 TCF Monitor v18 启动")
 
     last_occurrences = None
     last_notify_time = 0
@@ -57,32 +57,32 @@ def main():
                 page.goto(URL, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(8000)
 
-                page_valid = False   # ⭐关键状态
+                page_valid = False  # ⭐关键
 
                 while True:
                     try:
                         text = page.inner_text("body").lower()
 
-                        # ================= queue检测 =================
+                        # ================= queue =================
                         if "virtual waiting room" in text or "queue-fair" in text:
                             print("⏳ queue中，等待放行...")
                             time.sleep(8)
                             continue
 
+                        # ================= 页面加载完成判断（关键修复） =================
+                        if not page_valid:
+                            if "registration" in text:
+                                page_valid = True
+                                print("✅ 页面已加载完成（检测到 registration）")
+                            else:
+                                print("⏳ 页面还未加载完成...")
+                                time.sleep(CHECK_INTERVAL)
+                                continue
+
                         # ================= keyword检测 =================
                         occurrences = text.count(KEYWORD)
 
                         print("📊 occurrences:", occurrences)
-
-                        # ===== 页面第一次成功 =====
-                        if occurrences >= 1:
-                            page_valid = True
-
-                        # ===== 如果从未成功过，继续等 =====
-                        if not page_valid:
-                            print("⏳ 等待页面真正加载完成...")
-                            time.sleep(CHECK_INTERVAL)
-                            continue
 
                         # ===== 初始化 =====
                         if last_occurrences is None:
