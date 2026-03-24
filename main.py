@@ -9,11 +9,11 @@ URL = "https://www.alliance-francaise.ca/en/exams/tests/informations-about-tcf-c
 BOT_TOKEN = "8683283125:AAEmfiRTMxN35jTAsQfqF_HIQ6YymYoHyXI"
 CHAT_ID = "5068415693"   # ⚠️ 一定要是字符串
 
-CHECK_INTERVAL = 60
+CHECK_INTERVAL = 90
 FAIL_LIMIT = 3
 
 # 防重复通知（1.5分钟冷却）
-NOTIFY_COOLDOWN = 90
+NOTIFY_COOLDOWN = 180
 
 
 # ================= Telegram =================
@@ -73,7 +73,7 @@ def check_page(context):
 
             text = page.inner_text("body")
 
-            # ================= BLOCKED 强判断（修复）=================
+            # ================= BLOCKED 判断 =================
             if (
                 "Checking your browser" in text or
                 "Access denied" in text
@@ -82,24 +82,20 @@ def check_page(context):
                 page.close()
                 return {"status": "blocked"}
 
-            # ================= 页面是否正常（关键修复）=================
-            if len(html) < 60000:
-                print("⚠️ 页面过小，可能异常")
-                page.close()
-                return {"status": "loading"}
-
-            if "Registration" not in text:
-                print("⚠️ Registration 未加载（可能JS问题）")
-                page.close()
-                return {"status": "loading"}
-
-            # ================= 正常检测 =================
+            # ================= 核心修复：直接尝试查 count =================
             count = page.locator("text=No sessions currently available").count()
 
             print("🔎 No sessions count:", count)
 
+            # 如果能找到这个元素，就说明页面是可用的
+            if count >= 0:
+                page.close()
+                return {"status": "ok", "count": count}
+
+            # ================= fallback =================
+            print("⚠️ 未找到关键信息，可能页面异常")
             page.close()
-            return {"status": "ok", "count": count}
+            return {"status": "loading"}
 
         except Exception as e:
             print(f"❌ attempt {attempt+1} failed:", e)
@@ -155,31 +151,13 @@ def main():
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                # ================= loading（不报警）=================
+                # ================= loading =================
                 if result["status"] == "loading":
-                    print("⏳ 页面未准备好，跳过")
+                    print("⏳ 页面异常但继续监控")
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                # ================= fail =================
-                if result["status"] != "ok":
-                    fail_count += 1
-                    print(f"⚠️ fetch failed ({fail_count})")
-
-                    if fail_count >= FAIL_LIMIT:
-                        print("♻️ hard restart browser")
-
-                        try:
-                            browser.close()
-                        except:
-                            pass
-
-                        browser, context = create_browser(p)
-                        fail_count = 0
-
-                    time.sleep(CHECK_INTERVAL)
-                    continue
-
+                # ================= 正常逻辑 =================
                 fail_count = 0
                 now = time.time()
 
@@ -187,42 +165,23 @@ def main():
 
                 print("📊 status:", current_count)
 
-                # ================= init =================
                 if last_count is None:
                     last_count = current_count
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                # ================= detect =================
                 changed = current_count != last_count
                 improved = current_count < last_count
 
-                should_notify = (
-                    changed and
-                    improved and
-                    (now - last_notify_time > NOTIFY_COOLDOWN)
-                )
-
-                if should_notify:
+                if changed and improved and (now - last_notify_time > NOTIFY_COOLDOWN):
                     print("🎉 CHANGE detected!")
 
-                    time.sleep(5)
+                    send_telegram(
+                        "🎉 TCF Canada 可能出现考位变化！\n\n"
+                        f"之前: {last_count}\n现在: {current_count}\n\n{URL}"
+                    )
 
-                    confirm = check_page(context)
-
-                    if (
-                        confirm["status"] == "ok" and
-                        confirm["count"] < last_count
-                    ):
-                        send_telegram(
-                            "🎉 TCF Canada 可能出现考位变化！\n\n"
-                            f"之前: {last_count}\n现在: {confirm['count']}\n\n{URL}"
-                        )
-
-                        last_count = confirm["count"]
-                        last_notify_time = now
-                    else:
-                        print("⚠️ false positive ignored")
+                    last_notify_time = now
 
                 last_count = current_count
 
