@@ -66,37 +66,41 @@ def check_page(context):
             })
 
             page.goto(URL, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_timeout(4000)
+
+            # ================= 等待页面真正加载（关键）=================
+            for _ in range(3):
+                page.wait_for_timeout(3000)
+                text = page.inner_text("body")
+
+                if "with registration opening one month before each session." in text:
+                    break
+
+                print("⏳ 等待页面JS加载...")
 
             html = page.content()
             print("🔍 html length:", len(html))
 
             text = page.inner_text("body")
 
-            # ================= NEW: 更严格 BLOCKED 判断 =================
-            strong_block = (
+            # ================= BLOCKED 强判断 =================
+            if (
                 "Checking your browser" in text or
                 "Access denied" in text or
                 "queue" in text.lower()
-            )
-
-            weak_block = len(html) < 8000
-
-            if strong_block:
+            ):
                 print("🚨 STRONG BLOCK detected")
                 page.close()
                 return {"status": "blocked"}
 
-            if weak_block:
-                print("⚠️ weak block detected")
+            # ================= 页面未加载完成 =================
+            if "with registration opening one month before each session." not in text:
+                print("⚠️ page not fully loaded")
                 page.close()
-                return {"status": "weak_block"}
+                return {"status": "loading"}
 
-            if len(html) < 500:
-                raise Exception("page too small")
-
+            # ================= 页面正常后再判断 =================
             if "Registration" not in text:
-                print("⚠️ Registration not found")
+                print("⚠️ Registration not found (但页面已加载)")
                 page.close()
                 return {"status": "not_ready"}
 
@@ -132,8 +136,6 @@ def main():
     last_notify_time = 0
     fail_count = 0
 
-    weak_block_count = 0  # ✅ 新增
-
     with sync_playwright() as p:
 
         browser, context = create_browser(p)
@@ -149,13 +151,13 @@ def main():
 
                 result = check_page(context)
 
-                # ================= BLOCKED（强）=================
+                # ================= BLOCKED =================
                 if result["status"] == "blocked":
                     now = time.time()
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
                         send_telegram(
-                            "🚨 TCF Canada 页面被拦截（强信号）！\n\n"
+                            "🚨 TCF Canada 页面被拦截（高优先级）\n\n"
                             f"{URL}"
                         )
                         last_notify_time = now
@@ -163,27 +165,11 @@ def main():
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                # ================= BLOCKED（弱，需要连续）=================
-                if result["status"] == "weak_block":
-                    weak_block_count += 1
-                    print(f"⚠️ weak block count: {weak_block_count}")
-
-                    if weak_block_count >= 2:
-                        now = time.time()
-
-                        if now - last_notify_time > NOTIFY_COOLDOWN:
-                            send_telegram(
-                                "⚠️ TCF Canada 页面异常（连续加载异常）\n\n"
-                                f"{URL}"
-                            )
-                            last_notify_time = now
-
-                        weak_block_count = 0
-
+                # ================= loading（不报警）=================
+                if result["status"] == "loading":
+                    print("⏳ 页面加载中，跳过")
                     time.sleep(CHECK_INTERVAL)
                     continue
-                else:
-                    weak_block_count = 0
 
                 # ================= fail =================
                 if result["status"] != "ok":
