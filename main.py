@@ -25,7 +25,7 @@ NOTIFY_COOLDOWN = 100
 KEYWORD = "No sessions currently available"
 
 
-# ================= Telegram 通知函数 =================
+# ================= Telegram =================
 def send_telegram(msg):
     """发送 Telegram 消息"""
     try:
@@ -35,12 +35,11 @@ def send_telegram(msg):
             timeout=10
         )
     except Exception as e:
-        print("❌ Telegram error:", e)
+        print("Telegram error:", e)
 
 
-# ================= 创建浏览器 =================
+# ================= 浏览器初始化 =================
 def create_browser(p):
-    """初始化 Playwright 浏览器"""
     browser = p.chromium.launch(
         headless=True,
         args=[
@@ -53,36 +52,34 @@ def create_browser(p):
     return browser, context
 
 
-# ================= 判断页面状态 =================
-def check_page(page):
+# ================= 页面状态判断 =================
+def detect_state(page):
     """
-    判断当前页面状态：
-    return:
-        queue   -> 排队中
-        blocked -> 被拦截
-        loading -> 页面未加载完成
-        full    -> 没有考位（显示 no sessions）
-        open    -> 可能有考位（关键词消失）
+    返回状态：
+    - queue
+    - blocked
+    - loading
+    - full
+    - open
     """
 
     text = page.inner_text("body").lower()
 
-    # ========== Queue 排队页面 ==========
+    # ===== Queue 页面 =====
     if "queue-fair" in text or "virtual waiting room" in text:
         return "queue"
 
-    # ========== 被 Cloudflare / 安全拦截 ==========
+    # ===== 被封 =====
     if "checking your browser" in text or "access denied" in text:
         return "blocked"
 
-    # ========== 页面未加载完整 ==========
+    # ===== 未加载完成 =====
     if len(text) < 2000:
         return "loading"
 
-    # ========== 核心判断逻辑 ==========
+    # ===== 核心检测 =====
     occurrences = text.count(KEYWORD)
 
-    # 如果关键词出现多次 => 基本说明“没位置”
     if occurrences >= 2:
         return "full"
     elif occurrences == 0:
@@ -91,39 +88,40 @@ def check_page(page):
         return "unknown"
 
 
-# ================= Queue 等待逻辑（关键） =================
-def wait_in_queue(page):
+# ================= Queue 等待（工业级关键） =================
+def wait_queue(page):
     """
-    Queue-Fair 等待逻辑：
-    ❗重点：不刷新页面，不重新进入，只等待自动跳转
+    ❗关键点：
+    - 不刷新页面
+    - 不重新 goto
+    - 只等待 DOM 自动跳转
     """
 
-    print("⏳ 进入排队模式（静默等待，不通知 Telegram）")
+    print("⏳ ENTER QUEUE MODE (no reload, stable wait)")
 
     while True:
         try:
             text = page.inner_text("body").lower()
 
-            # 如果已经离开 queue 页面 -> 说明排队结束
+            # 已经离开 queue
             if "queue-fair" not in text and "virtual waiting room" not in text:
-                print("🚀 已离开 Queue-Fair，进入目标页面")
+                print("🚀 EXIT QUEUE")
                 return
 
-            # 仍在排队
-            print("⏳ 排队中...等待系统放行")
+            print("⏳ waiting in queue...")
 
             time.sleep(QUEUE_CHECK_INTERVAL)
 
         except Exception as e:
-            print("⚠️ queue check error:", e)
+            print("queue error:", e)
             time.sleep(QUEUE_CHECK_INTERVAL)
 
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v8 启动（Queue静默 + 状态监控版）")
+    print("🔥 TCF Monitor v9 (Industrial Stable Edition)")
 
-    send_telegram("🚀 TCF Monitor 已启动（v8 Queue静默模式）")
+    send_telegram("🚀 TCF Monitor v9 启动（工业稳定版）")
 
     last_state = None
     last_notify_time = 0
@@ -133,64 +131,65 @@ def main():
         page = context.new_page()
 
         while True:
-            print("\n💓 心跳检测...")
-
             try:
-                # ================= 打开页面 =================
+                print("\n💓 cycle start")
+
+                # ================= 访问页面（只在 NORMAL 模式） =================
                 page.goto(URL, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(4000)
 
-                status = check_page(page)
+                state = detect_state(page)
 
-                # ================= QUEUE 模式 =================
-                if status == "queue":
-                    # ❗不发 Telegram，不打扰用户
-                    wait_in_queue(page)
+                # ================= QUEUE =================
+                if state == "queue":
+                    wait_queue(page)
                     continue
 
-                # ================= BLOCKED =================
-                if status == "blocked":
-                    print("🚨 被拦截")
+                # ================= BLOCK =================
+                if state == "blocked":
+                    print("🚨 blocked")
                     time.sleep(random.randint(MIN_INTERVAL, MAX_INTERVAL))
                     continue
 
                 # ================= LOADING =================
-                if status == "loading":
-                    print("⏳ 页面未加载完成")
+                if state == "loading":
+                    print("⏳ loading")
                     time.sleep(20)
                     continue
 
-                # ================= 状态处理 =================
-                current_state = status
-                print("📊 当前状态:", current_state)
+                print("📊 state:", state)
 
-                # 第一次初始化状态
+                # ================= 初始化 =================
                 if last_state is None:
-                    last_state = current_state
+                    last_state = state
                     time.sleep(random.randint(MIN_INTERVAL, MAX_INTERVAL))
                     continue
 
                 now = time.time()
 
-                # 是否发生变化
-                changed = current_state != last_state
+                # ================= 状态变化判断 =================
+                changed = state != last_state
 
-                # 只在 “满位 → 开放” 时通知
-                improved = last_state == "full" and current_state == "open"
+                # 只在：full → open 时触发
+                improved = last_state == "full" and state == "open"
 
                 if changed and improved and (now - last_notify_time > NOTIFY_COOLDOWN):
                     send_telegram(
                         "🎉 TCF Canada 可能出现考位！\n\n"
-                        f"状态变化: {last_state} → {current_state}\n\n"
-                        f"链接: {URL}"
+                        f"状态变化：{last_state} → {state}\n\n"
+                        + URL
                     )
-
                     last_notify_time = now
 
-                last_state = current_state
+                last_state = state
+
+                # ================= 随机休眠（防封） =================
+                sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
+                print(f"⏱ sleep {sleep_time}s")
+                time.sleep(sleep_time)
 
             except Exception as e:
-                print("❌ 主循环异常:", e)
+                print("❌ error:", e)
                 time.sleep(30)
 
 
