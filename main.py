@@ -52,7 +52,7 @@ def main():
             try:
                 print("\n💓 新一轮访问页面")
 
-                page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+                page.goto(URL, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(8000)
 
                 # ================= 等待进入真实页面 =================
@@ -64,6 +64,7 @@ def main():
 
                     if page.locator("text=Registration").count() > 0:
                         print("✅ 已进入页面")
+                        page.wait_for_selector("text=Register", timeout=2000)
                         break
 
                     print("⏳ 等待页面加载...")
@@ -87,7 +88,7 @@ def main():
                 now = time.time()
 
                 # ================= 有考位 =================
-                if register_count > 0:
+                if register_count > 2:
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
 
@@ -95,7 +96,7 @@ def main():
 
                         send_telegram(
                             "🎉 TCF Canada 有考位!\n\n"
-                            f"Register 数量: {register_count}\n\n"
+                            f"Register 数量: {register_count-2}\n\n"
                             f"{URL}"
                         )
 
