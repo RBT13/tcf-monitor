@@ -95,7 +95,7 @@ def main():
 
                         send_telegram(
                             "🎉 TCF Canada 有考位!\n\n"
-                            f"Register 数量: {register_count}\n\n"
+                            f"Register 数量: {register_count-2}\n\n"
                             f"{URL}"
                         )
 
