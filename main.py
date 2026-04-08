@@ -52,7 +52,7 @@ def main():
             try:
                 print("\n💓 新一轮访问页面")
 
-                page.goto(URL, wait_until="domcontentloaded", timeout=30000)
+                page.goto(URL, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(8000)
 
                 # ================= 等待进入真实页面 =================
@@ -64,7 +64,6 @@ def main():
 
                     if page.locator("text=Registration").count() > 0:
                         print("✅ 已进入页面")
-                        page.wait_for_selector("text=Register", timeout=2000)
                         break
 
                     print("⏳ 等待页面加载...")
