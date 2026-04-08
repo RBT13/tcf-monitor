@@ -73,7 +73,7 @@ def main():
                 register_list = []
 
                 for _ in range(3):
-                    register_count = page.locator("button:has-text('Register')").count()
+                    register_count = page.locator("text=Register").count()
                     register_list.append(register_count)
 
                     print("📊 当前 Register 数:", register_count)
