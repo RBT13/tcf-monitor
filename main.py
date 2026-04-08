@@ -34,9 +34,9 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor（Register检测版）")
+    print("🔥 TCF Monitor v20（最终行为优化版）")
 
-    send_telegram("🚀 TCF Monitor 启动")
+    send_telegram("🚀 TCF Monitor v20 启动")
 
     last_notify_time = 0
 
@@ -95,7 +95,7 @@ def main():
 
                         send_telegram(
                             "🎉 TCF Canada 有考位!\n\n"
-                            f"Register 数量: {register_count-2}\n\n"
+                            f"Register 数量: {register_count}\n\n"
                             f"{URL}"
                         )
 
