@@ -19,8 +19,6 @@ CHECK_INTERVAL = 5   # 页面内短检查
 
 NOTIFY_COOLDOWN = 120
 
-KEYWORD = "No sessions currently available"
-
 
 # ================= Telegram =================
 def send_telegram(msg):
@@ -36,9 +34,9 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v20（最终行为优化版）")
+    print("🔥 TCF Monitor（Register检测版）")
 
-    send_telegram("🚀 TCF Monitor v20 启动")
+    send_telegram("🚀 TCF Monitor 启动")
 
     last_notify_time = 0
 
@@ -72,44 +70,45 @@ def main():
                     time.sleep(5)
 
                 # ================= 短时间确认（避免误判） =================
-                occurrences_list = []
+                register_list = []
 
-                for _ in range(3):   # 连续检测3次
-                    occurrences = page.locator(f"text={KEYWORD}").count()
-                    occurrences_list.append(occurrences)
+                for _ in range(3):
+                    register_count = page.locator("button:has-text('Register')").count()
+                    register_list.append(register_count)
 
-                    print("📊 当前 occurrences:", occurrences)
+                    print("📊 当前 Register 数:", register_count)
                     time.sleep(CHECK_INTERVAL)
 
-                # 取“最稳定值”
-                occurrences = max(set(occurrences_list), key=occurrences_list.count)
+                # 取稳定值
+                register_count = max(set(register_list), key=register_list.count)
 
-                print("📊 稳定结果:", occurrences)
+                print("📊 稳定 Register 数:", register_count)
 
                 now = time.time()
 
-                # ================= 有位置 =================
-                if occurrences == 1:
+                # ================= 有考位 =================
+                if register_count > 0:
+
                     if now - last_notify_time > NOTIFY_COOLDOWN:
-                        print("🎉 检测到考位！")
+
+                        print("🎉 检测到考位!")
 
                         send_telegram(
-                            "🎉 TCF Canada 可能出现考位！\n\n"
-                            f"当前匹配数: {occurrences}\n\n"
-                            + URL
+                            "🎉 TCF Canada 有考位!\n\n"
+                            f"Register 数量: {register_count}\n\n"
+                            f"{URL}"
                         )
 
                         last_notify_time = now
 
-                    # 👉 有位置时可以短间隔再查一次（更激进）
-                    sleep_time = random.randint(5, 15)
+                    sleep_time = random.randint(30, 60)
 
                 # ================= 没位置 =================
                 else:
                     print("😴 没有考位，准备离开页面")
 
                     sleep_time = random.randint(MIN_INTERVAL, MAX_INTERVAL)
-                    # ⭐ 关键：关闭页面（真正离开）
+
                     try:
                         page.close()
                         print("🛑 已关闭当前页面")
@@ -119,7 +118,6 @@ def main():
                 print(f"⏱ 下次访问间隔: {sleep_time}s")
                 time.sleep(sleep_time)
 
-                # ⭐ 关键：重新创建页面（全新环境）
                 page = context.new_page()
                 print("🆕 新页面已创建")
 
