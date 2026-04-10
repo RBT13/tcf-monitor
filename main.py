@@ -74,6 +74,8 @@ def main():
 
                 for _ in range(3):
 
+                    page.wait_for_timeout(3000)
+
                     frame = page.frame_locator("iframe")
 
                     register_count = frame.get_by_role("button", name="Register").count()
