@@ -30,7 +30,7 @@ def send_telegram(msg):
         )
     except Exception as e:
         print("Telegram error:", e)
-        
+
 
 # ================= 主程序 =================
 def main():
@@ -76,7 +76,7 @@ def main():
 
                 for _ in range(3):
 
-                    nosession_count = page.locator("text=No sessions currently available").count()
+                    nosession_count = page.locator("text=No sessions currently available:visible").count()
 
                     nosession_list.append(nosession_count)
 
