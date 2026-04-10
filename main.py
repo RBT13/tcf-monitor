@@ -34,9 +34,9 @@ def send_telegram(msg):
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor v20（最终行为优化版）")
+    print("🔥 TCF Monitor（Register检测版）")
 
-    send_telegram("🚀 TCF Monitor v20 启动")
+    send_telegram("🚀 TCF Monitor 启动")
 
     last_notify_time = 0
 
@@ -69,17 +69,19 @@ def main():
                     print("⏳ 等待页面加载...")
                     time.sleep(5)
 
-                # ================= 短时间确认（避免误判） =================
+                # ================= 短时间确认 =================
                 register_list = []
 
                 for _ in range(3):
-                    register_count = page.locator("text=Register").count()
+
+                    # ⭐ 只检测真正按钮
+                    register_count = page.locator("a:has-text('Register')").count()
+
                     register_list.append(register_count)
 
-                    print("📊 当前 Register 数:", register_count)
+                    print("📊 当前 Register 按钮数:", register_count)
                     time.sleep(CHECK_INTERVAL)
 
-                # 取稳定值
                 register_count = max(set(register_list), key=register_list.count)
 
                 print("📊 稳定 Register 数:", register_count)
@@ -87,7 +89,7 @@ def main():
                 now = time.time()
 
                 # ================= 有考位 =================
-                if register_count > 2:
+                if register_count > 0:
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
 
@@ -95,7 +97,7 @@ def main():
 
                         send_telegram(
                             "🎉 TCF Canada 有考位!\n\n"
-                            f"Register 数量: {register_count}\n\n"
+                            f"Register 按钮数量: {register_count}\n\n"
                             f"{URL}"
                         )
 
