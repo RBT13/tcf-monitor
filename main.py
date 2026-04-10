@@ -72,27 +72,27 @@ def main():
                     time.sleep(5)
 
                 # ================= 检测 No session =================
-                nosession_list = []
+                register_list = []
                 page.wait_for_timeout(3000)
 
                 for _ in range(3):
 
-                    nosession_count = page.locator("text=Register").count()
+                    register_count = page.locator("text=Register").count()
 
-                    nosession_list.append(nosession_count)
+                    register_list.append(register_count)
 
-                    print("📊 当前 No-session 数:", nosession_count)
+                    print("📊 当前 Register 数:", register_count)
 
                     time.sleep(CHECK_INTERVAL)
 
-                nosession_count = max(set(nosession_list), key=nosession_list.count)
+                register_count_count = max(set(register_list), key=register_list.count)
 
-                print("📊 稳定 No-session 数:", nosession_count)
+                print("📊 稳定 Register 数:", register_count_count)
 
                 now = time.time()
 
                 # ================= 有考位 =================
-                if nosession_count > 2:
+                if register_count_count > 2:
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
 
