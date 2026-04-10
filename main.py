@@ -75,7 +75,7 @@ def main():
                 for _ in range(3):
 
                     # ⭐ 只检测真正按钮
-                    register_count = page.locator("a:has-text('Register')").count()
+                    register_count = page.get_by_role("button", name="Register").count()
 
                     register_list.append(register_count)
 
