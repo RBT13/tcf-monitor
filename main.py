@@ -73,10 +73,11 @@ def main():
 
                 # ================= 检测 No session =================
                 nosession_list = []
+                page.wait_for_timeout(3000)
 
                 for _ in range(3):
 
-                    nosession_count = page.locator("text=No sessions currently available:visible").count()
+                    nosession_count = page.locator("text=Register").count()
 
                     nosession_list.append(nosession_count)
 
@@ -91,7 +92,7 @@ def main():
                 now = time.time()
 
                 # ================= 有考位 =================
-                if nosession_count < 2:
+                if nosession_count > 2:
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
 
