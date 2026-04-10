@@ -30,11 +30,11 @@ def send_telegram(msg):
         )
     except Exception as e:
         print("Telegram error:", e)
-
+        
 
 # ================= 主程序 =================
 def main():
-    print("🔥 TCF Monitor（Register检测版）")
+    print("🔥 TCF Monitor（No-session检测版）")
 
     send_telegram("🚀 TCF Monitor 启动")
 
@@ -45,6 +45,7 @@ def main():
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
+
         context = browser.new_context()
         page = context.new_page()
 
@@ -57,50 +58,47 @@ def main():
 
                 # ================= 等待进入真实页面 =================
                 while True:
+
                     if page.locator("text=Virtual Waiting Room").count() > 0:
                         print("⏳ queue中...")
                         time.sleep(5)
                         continue
 
-                    if page.locator("text=quarterly").count() > 0:
+                    if page.locator("text=Registrations").count() > 0:
                         print("✅ 已进入页面")
                         break
 
                     print("⏳ 等待页面加载...")
                     time.sleep(5)
 
-                # ================= 短时间确认 =================
-                register_list = []
+                # ================= 检测 No session =================
+                nosession_list = []
 
                 for _ in range(3):
 
-                    page.wait_for_timeout(3000)
+                    nosession_count = page.locator("text=No sessions currently available").count()
 
-                    frame = page.frame_locator("iframe")
+                    nosession_list.append(nosession_count)
 
-                    register_count = frame.get_by_role("button", name="Register").count()
+                    print("📊 当前 No-session 数:", nosession_count)
 
-                    register_list.append(register_count)
-
-                    print("📊 当前 Register 按钮数:", register_count)
                     time.sleep(CHECK_INTERVAL)
 
-                register_count = max(set(register_list), key=register_list.count)
+                nosession_count = max(set(nosession_list), key=nosession_list.count)
 
-                print("📊 稳定 Register 数:", register_count)
+                print("📊 稳定 No-session 数:", nosession_count)
 
                 now = time.time()
 
                 # ================= 有考位 =================
-                if register_count > 0:
+                if nosession_count < 2:
 
                     if now - last_notify_time > NOTIFY_COOLDOWN:
 
                         print("🎉 检测到考位!")
 
                         send_telegram(
-                            "🎉 TCF Canada 有考位!\n\n"
-                            f"Register 按钮数量: {register_count}\n\n"
+                            "🎉 TCF Canada 有新的考试位置!\n\n"
                             f"{URL}"
                         )
 
