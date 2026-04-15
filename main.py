@@ -64,7 +64,7 @@ def main():
                         time.sleep(5)
                         continue
 
-                    if page.locator("text=quarterly").count() > 0:
+                    if page.locator("text=month").count() > 0:
                         print("✅ 已进入页面")
                         break
 
